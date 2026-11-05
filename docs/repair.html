@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Watch repair with doorstep pickup - Weekend Watch</title>
+  <meta name="description" content="Book a watch repair. We collect it from your door on the weekend, our technician fixes it, and we bring it back.">
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="container stack">
+      <h1>Watch repair, picked up from your door.</h1>
+      <p class="lead">Book online. On the weekend our delivery partner collects your watch, records a short video of its condition, and our shop's technician inspects it. You approve the cost before any work starts.</p>
+      <div id="weekend"></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container grid cols-2" style="align-items:start">
+      <div class="card">
+        <h2>Book a repair</h2>
+        <form id="repairForm" class="stack" novalidate>
+          <div class="field"><label for="wb">Watch brand</label><input id="wb" type="text" maxlength="60" placeholder="e.g. Titan" required></div>
+          <div class="field"><label for="wm">Model (if you know it)</label><input id="wm" type="text" maxlength="80" placeholder="e.g. Edge, or leave empty"></div>
+          <div class="field"><label for="issue">What is wrong?</label><textarea id="issue" maxlength="500" placeholder="e.g. Stopped working, battery leaked, glass cracked, strap broken" required></textarea></div>
+          <div id="delivery"></div>
+          <div id="err" class="error-box hidden" role="alert"></div>
+          <button class="btn block" type="submit">Create job card</button>
+        </form>
+        <div id="done" class="hidden"></div>
+      </div>
+
+      <div class="stack">
+        <div class="card soft">
+          <h3>How the pickup works</h3>
+          <ol class="muted" style="padding-left:1.2em;margin:0">
+            <li>You book here. A job card is created.</li>
+            <li>On Saturday or Sunday our partner arrives in your chosen time slot.</li>
+            <li><b>A 10-second video</b> of your watch is recorded in front of you, showing any existing scratches or dents. This protects you and us.</li>
+            <li>The shop's technician inspects it during the week and sends you a cost estimate.</li>
+            <li>You approve or decline on the tracking page. Decline and we return it unrepaired.</li>
+            <li>After repair, we deliver it back on the next weekend and you pay at the door.</li>
+          </ol>
+        </div>
+        <div class="card soft" id="fee"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(async function () {
+  const { h, api, rupee, config, mountChrome, weekendBanner, deliveryForm, busy } = WW;
+  mountChrome('repair');
+  try {
+    const c = await config();
+    document.getElementById('weekend').append(weekendBanner(c));
+    document.getElementById('fee').append(h('h3', {}, 'What it costs'),
+      h('p', { class: 'muted' }, 'Pickup and return together: ', h('b', {}, rupee(c.repairFee)), '. Plus the repair cost you approve. If you decline the estimate, you only pay the ', rupee(c.repairFee), ' pickup & return.'),
+      h('p', { class: 'muted' }, 'Pay at the door in cash or UPI when the watch is returned.'));
+  } catch (e) { document.getElementById('weekend').append(h('div', { class: 'notice' }, e.message)); }
+
+  const form = deliveryForm();
+  document.getElementById('delivery').append(form.el);
+  const err = document.getElementById('err');
+  const btn = document.querySelector('#repairForm button[type=submit]');
+  document.getElementById('repairForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    err.classList.add('hidden');
+    try {
+      const brand = document.getElementById('wb').value.trim();
+      const issue = document.getElementById('issue').value.trim();
+      if (!brand) throw new Error('Please tell us the watch brand.');
+      if (issue.length < 5) throw new Error('Please describe the problem in a few words.');
+      const d = form.collect();
+      busy(btn, true, 'Creating...');
+      const res = await api('/api/orders/repair', { method: 'POST', body: { ...d, watch_brand: brand, watch_model: document.getElementById('wm').value.trim(), issue } });
+      try { WW.store.set('ww_last_order', JSON.stringify({ code: res.code, phone: d.phone })); } catch { /* ignore */ }
+      document.getElementById('repairForm').classList.add('hidden');
+      const done = document.getElementById('done');
+      done.classList.remove('hidden');
+      done.replaceChildren(
+        h('div', { class: 'ok-box' }, res.message),
+        h('p', {}, 'Your job card number is'),
+        h('div', { class: 'big-amount' }, res.code),
+        h('p', { class: 'muted' }, 'Save this number. Use it with your mobile number to see the estimate and follow the pickup and return.'),
+        h('a', { class: 'btn', href: 'track.html#' + res.code }, 'Track this repair'));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (e) {
+      err.textContent = e.message; err.classList.remove('hidden'); busy(btn, false);
+    }
+  });
+})();
+</script>
+</body>
+</html>

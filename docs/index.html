@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Weekend Watch - watches delivered to your door</title>
+  <meta name="description" content="Order any watch and get it delivered to your door on the weekend. Local pickup and doorstep return for watch repairs.">
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<main>
+  <section class="hero">
+    <div class="container stack">
+      <h1>Your watch, delivered to your door every weekend.</h1>
+      <p class="lead">Pick a watch, or tell us the one you saw online. Our shop confirms the price, you approve it, and we deliver on Saturday or Sunday. No photos to take, no trips to the shop.</p>
+      <div id="weekend"></div>
+      <div class="row">
+        <a class="btn" href="#browse">Browse watches</a>
+        <a class="btn secondary" href="#request">Request any watch</a>
+        <a class="btn secondary" href="repair.html">Repair my watch</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="browse">
+    <div class="container stack">
+      <h2>Watches we can supply</h2>
+      <p class="muted">Prices shown are the MRP. Our shop confirms availability and your final price before you pay anything.</p>
+      <div class="field" style="max-width:420px">
+        <label for="search" class="sr-only">Search watches</label>
+        <input id="search" type="search" placeholder="Search brand, model or colour">
+      </div>
+      <div id="brands" class="row" role="group" aria-label="Filter by brand"></div>
+      <div id="catalog" class="grid cols-3" aria-live="polite"><p class="muted">Loading watches...</p></div>
+    </div>
+  </section>
+
+  <section class="section" id="request">
+    <div class="container stack">
+      <h2>Can't find it? Request any watch</h2>
+      <p class="muted">Paste the link of the watch you like from any website, or type the brand and model number. Our shop checks the distributor and sends you a price you can approve or decline.</p>
+      <div class="card" style="max-width:640px">
+        <div class="tabs" role="tablist">
+          <button role="tab" id="tab-link" aria-selected="true" type="button">Paste a link</button>
+          <button role="tab" id="tab-model" aria-selected="false" type="button">Brand &amp; model</button>
+        </div>
+        <form id="reqForm" class="stack" novalidate>
+          <div id="paneLink">
+            <div class="field">
+              <label for="itemUrl">Link to the watch</label>
+              <input id="itemUrl" type="url" inputmode="url" placeholder="https://..." maxlength="600">
+              <span class="hint">Amazon, Flipkart, Titan, Casio, or any brand website.</span>
+            </div>
+            <div id="preview"></div>
+          </div>
+          <div id="paneModel" class="hidden">
+            <div class="field"><label for="itemBrand">Brand</label><input id="itemBrand" type="text" maxlength="60" placeholder="e.g. Casio"></div>
+            <div class="field"><label for="itemModel">Model number</label><input id="itemModel" type="text" maxlength="80" placeholder="e.g. F-91W-1"></div>
+          </div>
+          <div id="reqError" class="error-box hidden" role="alert"></div>
+          <button class="btn" type="submit">Continue</button>
+        </form>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="container stack">
+      <h2>How it works</h2>
+      <div class="grid cols-3">
+        <div class="card flat"><h3>1. Order any day</h3><p class="muted">Choose or request a watch. Takes two minutes, any time Monday to Friday.</p></div>
+        <div class="card flat"><h3>2. Approve the price</h3><p class="muted">Our shop checks with the distributor and sends one clear price. You say yes or no.</p></div>
+        <div class="card flat"><h3>3. Weekend delivery</h3><p class="muted">Approved before Friday 8 pm? We deliver on Saturday or Sunday, morning or afternoon, as you chose.</p></div>
+      </div>
+      <div class="card soft" id="fees"></div>
+    </div>
+  </section>
+</main>
+
+<dialog id="orderDialog" aria-labelledby="odTitle"><div class="dialog-body" id="odBody"></div></dialog>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(async function () {
+  const { h, api, rupee, config, mountChrome, weekendBanner, deliveryForm, busy, pageUrl } = WW;
+  mountChrome('shop');
+
+  // ---- weekend banner and fees
+  try {
+    const c = await config();
+    document.getElementById('weekend').append(weekendBanner(c));
+    document.getElementById('fees').append(
+      h('h3', {}, 'Simple, honest pricing'),
+      h('ul', { class: 'muted' },
+        h('li', {}, 'Watches: the shop price is never above MRP. Doorstep delivery is a separate ', h('b', {}, rupee(c.retailFee)), ' charge.'),
+        h('li', {}, 'Repairs: pickup and return together cost ', h('b', {}, rupee(c.repairFee)), '. The repair cost is quoted and you approve it before any work.'),
+        h('li', {}, 'Pay at the door in cash or by UPI. Nothing is charged online.')));
+  } catch (e) {
+    document.getElementById('weekend').append(h('div', { class: 'notice' }, e.message));
+  }
+
+  // ---- catalogue
+  const catalog = document.getElementById('catalog');
+  const brandsEl = document.getElementById('brands');
+  let brand = '';
+  let timer;
+  const tile = (p) => p.image_url
+    ? h('div', { class: 'tile' }, h('img', { src: p.image_url, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' }))
+    : h('div', { class: 'tile', 'aria-hidden': 'true' }, p.brand.slice(0, 2).toUpperCase());
+
+  async function loadCatalog(initial) {
+    const q = document.getElementById('search').value.trim();
+    const qs = new URLSearchParams();
+    if (brand) qs.set('brand', brand);
+    if (q) qs.set('q', q);
+    try {
+      const { products, brands } = await api('/api/catalog?' + qs);
+      if (initial) {
+        brandsEl.replaceChildren(...['All', ...brands].map((b) => h('button', {
+          type: 'button', class: 'chip', 'aria-pressed': String((b === 'All' && !brand) || b === brand),
+          onclick: (ev) => { brand = b === 'All' ? '' : b; brandsEl.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', 'false')); ev.currentTarget.setAttribute('aria-pressed', 'true'); loadCatalog(false); },
+        }, b)));
+      }
+      if (!products.length) {
+        catalog.replaceChildren(h('p', { class: 'muted' }, initial && !q && !brand ? 'Our catalogue is being set up. You can still request any watch below.' : 'No match. Try the request form below - we can get almost any watch.'));
+        return;
+      }
+      catalog.replaceChildren(...products.map((p) => h('article', { class: 'card product' },
+        tile(p),
+        h('div', {}, h('b', {}, p.brand), ' ', h('span', { class: 'muted' }, p.model_no)),
+        p.name ? h('div', { class: 'small muted' }, p.name) : null,
+        h('div', { class: 'row' }, [p.dial_shape, p.color, p.strap].filter(Boolean).map((t) => h('span', { class: 'chip' }, t))),
+        h('div', { class: 'price' }, 'MRP ', rupee(p.mrp)),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn small', type: 'button', onclick: () => openOrder({ product: p }) }, 'Order this'),
+          p.official_url ? h('a', { class: 'btn secondary small', href: p.official_url, target: '_blank', rel: 'noopener noreferrer' }, 'Official photos') : null))));
+    } catch (e) {
+      catalog.replaceChildren(h('div', { class: 'error-box' }, e.message));
+    }
+  }
+  document.getElementById('search').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => loadCatalog(false), 250); });
+  loadCatalog(true);
+
+  // ---- request form
+  const tabLink = document.getElementById('tab-link');
+  const tabModel = document.getElementById('tab-model');
+  const paneLink = document.getElementById('paneLink');
+  const paneModel = document.getElementById('paneModel');
+  const reqError = document.getElementById('reqError');
+  function showTab(link) {
+    tabLink.setAttribute('aria-selected', String(link));
+    tabModel.setAttribute('aria-selected', String(!link));
+    paneLink.classList.toggle('hidden', !link);
+    paneModel.classList.toggle('hidden', link);
+    reqError.classList.add('hidden');
+  }
+  tabLink.onclick = () => showTab(true);
+  tabModel.onclick = () => showTab(false);
+
+  const urlInput = document.getElementById('itemUrl');
+  const previewBox = document.getElementById('preview');
+  let previewData = null;
+  let pTimer;
+  urlInput.addEventListener('input', () => {
+    clearTimeout(pTimer);
+    previewData = null;
+    previewBox.replaceChildren();
+    const v = urlInput.value.trim();
+    if (!/^https?:\/\/[^\s]+\.[^\s]+$/i.test(v)) return;
+    pTimer = setTimeout(async () => {
+      previewBox.replaceChildren(h('p', { class: 'hint' }, 'Reading the page...'));
+      try {
+        const { preview } = await api('/api/preview?url=' + encodeURIComponent(v));
+        previewData = preview;
+        if (preview && (preview.title || preview.image)) {
+          previewBox.replaceChildren(h('div', { class: 'card soft row', style: 'flex-wrap:nowrap' },
+            preview.image ? h('img', { src: preview.image, alt: '', style: 'width:72px;height:72px;object-fit:contain;border-radius:8px;background:#fff', referrerpolicy: 'no-referrer' }) : null,
+            h('div', {}, h('b', {}, preview.title || 'Watch link'), h('div', { class: 'small muted' }, preview.host))));
+        } else {
+          previewBox.replaceChildren(h('p', { class: 'hint' }, "We couldn't read a preview from that site, but you can still send the link."));
+        }
+      } catch { previewBox.replaceChildren(); }
+    }, 500);
+  });
+
+  document.getElementById('reqForm').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    reqError.classList.add('hidden');
+    const linkMode = tabLink.getAttribute('aria-selected') === 'true';
+    try {
+      if (linkMode) {
+        const v = urlInput.value.trim();
+        if (!/^https?:\/\/[^\s]+\.[^\s]+$/i.test(v)) throw new Error('Please paste the full link, starting with https://');
+        openOrder({ url: v, preview: previewData });
+      } else {
+        const b = document.getElementById('itemBrand').value.trim();
+        const m = document.getElementById('itemModel').value.trim();
+        if (!b || !m) throw new Error('Please enter both the brand and the model number.');
+        openOrder({ brand: b, model: m });
+      }
+    } catch (e) { reqError.textContent = e.message; reqError.classList.remove('hidden'); }
+  });
+
+  // ---- order dialog
+  const dlg = document.getElementById('orderDialog');
+  const body = document.getElementById('odBody');
+  dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+
+  async function openOrder(item) {
+    const c = await config().catch(() => null);
+    const form = deliveryForm();
+    const err = h('div', { class: 'error-box hidden', role: 'alert' });
+    const summary = item.product
+      ? [h('b', {}, `${item.product.brand} ${item.product.model_no}`), h('div', { class: 'small muted' }, `MRP ${rupee(item.product.mrp)} - final price confirmed by our shop`)]
+      : item.url
+        ? [h('b', {}, (item.preview && item.preview.title) || 'Watch from your link'), h('div', { class: 'small muted', style: 'overflow-wrap:anywhere' }, item.url)]
+        : [h('b', {}, `${item.brand} ${item.model}`), h('div', { class: 'small muted' }, 'Price confirmed by our shop')];
+    const submit = h('button', { class: 'btn block', type: 'submit' }, 'Send request');
+    const f = h('form', { class: 'stack', novalidate: true, onsubmit: async (ev) => {
+      ev.preventDefault();
+      err.classList.add('hidden');
+      try {
+        const d = form.collect();
+        busy(submit, true, 'Sending...');
+        const payload = { ...d };
+        if (item.product) payload.product_id = item.product.id;
+        else if (item.url) payload.item_url = item.url;
+        else { payload.item_brand = item.brand; payload.item_model = item.model; }
+        const res = await api('/api/orders/retail', { method: 'POST', body: payload });
+        showDone(res, d.phone);
+      } catch (e) {
+        err.textContent = e.message; err.classList.remove('hidden');
+        busy(submit, false);
+      }
+    } },
+      h('div', { class: 'card soft' }, summary),
+      c ? h('div', { class: 'notice' }, `Delivery on ${c.weekend.satLabel} or ${c.weekend.sunLabel} if approved before ${c.weekend.cutoffLabel}. Delivery charge ${rupee(c.retailFee)} (separate from the watch price).`) : null,
+      form.el, err, submit);
+    body.replaceChildren(
+      h('div', { class: 'dialog-head' }, h('h2', { id: 'odTitle' }, 'Your delivery details'),
+        h('button', { class: 'x', type: 'button', 'aria-label': 'Close', onclick: () => dlg.close() }, '×')),
+      f);
+    if (!dlg.open) dlg.showModal();
+  }
+
+  function showDone(res, phone) {
+    body.replaceChildren(
+      h('div', { class: 'dialog-head' }, h('h2', { id: 'odTitle' }, 'Request received'),
+        h('button', { class: 'x', type: 'button', 'aria-label': 'Close', onclick: () => dlg.close() }, '×')),
+      h('div', { class: 'ok-box' }, res.message),
+      h('p', {}, 'Your order code is'),
+      h('div', { class: 'big-amount' }, res.code),
+      h('p', { class: 'muted' }, 'Save it. You will need this code and your mobile number to check the price, approve it and follow the delivery.'),
+      h('div', { class: 'row' },
+        h('a', { class: 'btn', href: 'track.html#' + res.code }, 'Track this order'),
+        h('button', { class: 'btn secondary', type: 'button', onclick: () => { navigator.clipboard?.writeText(res.code).then(() => WW.toast('Code copied')).catch(() => {}); } }, 'Copy code')));
+    try { WW.store.set('ww_last_order', JSON.stringify({ code: res.code, phone })); } catch { /* ignore */ }
+  }
+})();
+</script>
+</body>
+</html>

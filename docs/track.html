@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Track your order - Weekend Watch</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<main>
+  <section class="section">
+    <div class="container stack" style="max-width:760px">
+      <h1>Track your order</h1>
+      <form id="lookup" class="card" novalidate>
+        <div class="grid cols-2">
+          <div class="field"><label for="code">Order code</label><input id="code" type="text" placeholder="WW-ABC123 or JC-ABC123" maxlength="20" autocapitalize="characters" autocomplete="off"></div>
+          <div class="field"><label for="phone">Mobile number you used</label><input id="phone" type="tel" inputmode="numeric" maxlength="16" autocomplete="tel"></div>
+        </div>
+        <div id="lookErr" class="error-box hidden" role="alert"></div>
+        <button class="btn" type="submit">Show my order</button>
+      </form>
+      <div id="result" class="stack" aria-live="polite"></div>
+    </div>
+  </section>
+</main>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  const { h, api, rupee, dayLabel, when, SLOT, mountChrome, statusInfo, busy, store } = WW;
+  mountChrome('track');
+  const codeEl = document.getElementById('code');
+  const phoneEl = document.getElementById('phone');
+  const result = document.getElementById('result');
+  const lookErr = document.getElementById('lookErr');
+
+  // prefill: code from the link (#WW-XXXXXX) and the last order on this device
+  let last = {};
+  try { last = JSON.parse(store.get('ww_last_order') || '{}'); } catch { /* ignore */ }
+  const hashCode = decodeURIComponent(location.hash.slice(1)).toUpperCase();
+  codeEl.value = hashCode || last.code || '';
+  if (last.phone && (!hashCode || hashCode === last.code)) phoneEl.value = last.phone;
+
+  document.getElementById('lookup').addEventListener('submit', (e) => { e.preventDefault(); load(); });
+  if (codeEl.value && phoneEl.value) load();
+
+  const post = (path, extra) => api(path, { method: 'POST', body: { code: codeEl.value.trim().toUpperCase(), phone: phoneEl.value.trim(), ...extra } });
+
+  async function load() {
+    lookErr.classList.add('hidden');
+    result.replaceChildren();
+    try {
+      const data = await post('/api/track');
+      store.set('ww_last_order', JSON.stringify({ code: data.order.code, phone: phoneEl.value.trim() }));
+      render(data);
+    } catch (e) { lookErr.textContent = e.message; lookErr.classList.remove('hidden'); }
+  }
+
+  async function act(btn, path, extra, okMsg) {
+    busy(btn, true, 'Please wait...');
+    try { await post(path, extra); WW.toast(okMsg); await load(); }
+    catch (e) { WW.toast(e.message); busy(btn, false); }
+  }
+
+  function render(d) {
+    const o = d.order;
+    const info = statusInfo(o, d.legs);
+    const retail = o.type === 'retail';
+    const parts = [];
+
+    // header + progress
+    parts.push(h('div', { class: 'card' },
+      h('div', { class: 'row between' },
+        h('div', {}, h('div', { class: 'small muted' }, retail ? 'Watch order' : 'Repair job card'), h('h2', { style: 'margin:0' }, o.code)),
+        h('span', { class: 'chip ' + info.tone }, info.label)),
+      h('p', { style: 'margin:.6em 0 0' }, h('b', {}, o.title || 'Your watch'), o.issue ? h('span', { class: 'muted' }, ' - ' + o.issue) : null),
+      info.step >= 0 ? h('ol', { class: 'steps', 'aria-label': 'Progress' },
+        info.steps.map((s, i) => h('li', { class: i < info.step ? 'done' : i === info.step ? 'now' : '' }, s))) : null));
+
+    // decision card
+    if (o.status === 'quoted' && o.decision === 'pending') {
+      const approve = h('button', { class: 'btn good', type: 'button', onclick: (e) => act(e.currentTarget, '/api/track/decision', { decision: 'approved' }, 'Approved. Thank you!') }, retail ? 'Approve & schedule delivery' : 'Approve repair');
+      const decline = h('button', { class: 'btn danger', type: 'button', onclick: (e) => { if (confirm(retail ? 'Decline this price?' : `Decline the repair? Your watch comes back unrepaired and you pay only ${rupee(o.delivery_fee)}.`)) act(e.currentTarget, '/api/track/decision', { decision: 'declined' }, 'Declined.'); } }, 'Decline');
+      parts.push(h('div', { class: 'card', style: 'border-color:var(--accent)' },
+        h('h3', {}, retail ? 'Your price is ready' : 'Repair estimate is ready'),
+        o.diagnosis ? h('p', {}, h('b', {}, 'What our technician found: '), o.diagnosis) : null,
+        o.parts_needed ? h('p', { class: 'muted' }, 'Parts: ' + o.parts_needed) : null,
+        breakdown(o),
+        h('div', { class: 'row', style: 'margin-top:14px' }, approve, decline)));
+    }
+
+    // delivery card ("know the delivery thing")
+    parts.push(deliveryCard(d, info));
+
+    // bill (when not already shown)
+    if (o.total_due != null && !(o.status === 'quoted' && o.decision === 'pending') && !['declined', 'unavailable', 'cancelled'].includes(o.status)) {
+      parts.push(h('div', { class: 'card' }, h('h3', {}, 'Your bill'), breakdown(o)));
+    }
+
+    // timeline
+    parts.push(h('div', { class: 'card' }, h('h3', {}, 'What has happened'),
+      h('ul', { class: 'timeline' }, d.events.slice().reverse().map((e) => h('li', {}, h('time', {}, when(e.at)), e.text)))));
+
+    // cancel
+    const cancellable = ['requested', 'quoted', 'approved'].includes(o.status) || (o.status === 'scheduled' && (retail || info.step === 0));
+    if (cancellable) {
+      parts.push(h('div', {}, h('button', { class: 'btn danger small', type: 'button', onclick: (e) => { if (confirm('Cancel this order?')) act(e.currentTarget, '/api/track/cancel', {}, 'Order cancelled.'); } }, 'Cancel this order')));
+    }
+    if (d.shopPhone) parts.push(h('p', { class: 'muted small' }, 'Need help? Call ', h('a', { href: 'tel:' + d.shopPhone }, d.shopPhone), '.'));
+    result.replaceChildren(...parts);
+  }
+
+  function breakdown(o) {
+    const rows = [];
+    rows.push(h('tr', {}, h('td', {}, retail(o) ? 'Watch price' + (o.mrp ? ` (MRP ${rupee(o.mrp)})` : '') : 'Repair estimate'), h('td', {}, o.price != null ? rupee(o.price) : '-')));
+    rows.push(h('tr', {}, h('td', {}, retail(o) ? 'Doorstep delivery' : 'Pickup & return'), h('td', {}, rupee(o.delivery_fee))));
+    rows.push(h('tr', { class: 'total' }, h('td', {}, 'Pay at the door'), h('td', {}, o.total_due != null ? rupee(o.total_due) : '-')));
+    return h('table', { class: 't' }, h('tbody', {}, rows));
+  }
+  const retail = (o) => o.type === 'retail';
+
+  function deliveryCard(d, info) {
+    const o = d.order;
+    const card = h('div', { class: 'card' }, h('h3', {}, 'Delivery'));
+    const add = (...x) => card.append(...x);
+    const leg = info.activeLeg;
+    const kind = { pickup: 'Pickup', delivery: 'Delivery', return: 'Return delivery' };
+
+    if (['declined', 'unavailable', 'cancelled'].includes(o.status)) { add(h('p', { class: 'muted' }, 'Nothing will be delivered.')); return card; }
+    if (o.status === 'delivered') { add(h('p', {}, 'Delivered. Thank you for choosing us!')); return card; }
+
+    if (leg && leg.status !== 'waiting' && leg.day_date) {
+      add(h('div', { class: 'big-amount' }, dayLabel(leg.day_date)),
+        h('p', { class: 'muted', style: 'margin:0' }, `${kind[leg.kind]} - ${SLOT[leg.slot] || ''}`));
+      if (leg.driver_first_name) add(h('p', {}, 'Your delivery partner: ', h('b', {}, leg.driver_first_name), '.'));
+      if (leg.status === 'out') add(h('div', { class: 'ok-box' }, 'On the way to you now. Please keep your phone nearby.'));
+      if (leg.attempts > 0) add(h('p', { class: 'small muted' }, 'A previous visit could not be completed, so this is a new attempt.'));
+      add(h('p', { class: 'small muted' }, 'Address: ' + o.address + (o.landmark ? ` (${o.landmark})` : '')));
+    } else if (['approved', 'ready'].includes(o.status) || (o.status === 'requested' && !retail(o)) || (leg && leg.status === 'waiting')) {
+      const w = d.weekend;
+      add(h('p', {}, h('b', {}, 'Waiting for a slot. '), `It will be scheduled in our Friday-night planning for ${w.satLabel} or ${w.sunLabel}`
+        + (o.pref_day !== 'any' ? ` (you prefer ${o.pref_day === 'sat' ? 'Saturday' : 'Sunday'})` : '') + '. You will see the exact day and time window here by Friday night.'));
+    } else {
+      add(h('p', { class: 'muted' }, retail(o)
+        ? 'Delivery is arranged once you approve the price. All deliveries happen on Saturday or Sunday.'
+        : 'We will tell you the exact repair-return day once your watch is repaired.'));
+    }
+
+    // payment help
+    if (o.total_due && ['approved', 'scheduled', 'out', 'ready'].includes(o.status)) {
+      const pay = h('div', { class: 'card soft', style: 'margin-top:10px' },
+        h('div', { class: 'row between' }, h('span', {}, 'To pay at the door'), h('b', { class: 'big-amount' }, rupee(o.total_due))),
+        h('div', { class: 'small muted' }, 'Payment: ' + (o.payment_method === 'UPI' ? 'UPI' : 'Cash')));
+      if (o.payment_method === 'UPI' && d.upiId) {
+        const upi = `upi://pay?pa=${encodeURIComponent(d.upiId)}&pn=${encodeURIComponent(d.shopName)}&am=${o.total_due}&cu=INR&tn=${encodeURIComponent(o.code)}`;
+        pay.append(h('div', { style: 'margin-top:8px' }, h('a', { class: 'btn secondary small', href: upi }, 'Pay with UPI app'), h('span', { class: 'hint' }, '  or pay when the delivery partner arrives.')));
+      }
+      add(pay);
+    }
+    return card;
+  }
+})();
+</script>
+</body>
+</html>

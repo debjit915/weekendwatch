@@ -1,0 +1,9 @@
+node_modules/
+.wrangler/
+.dev.vars
+*.log
+
+# Private business files: kept on this computer only, never published
+worker/
+BUSINESS_PLAN.md
+DEPLOY_GUIDE.md

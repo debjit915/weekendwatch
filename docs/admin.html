@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Shop desk - Weekend Watch</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<header class="site-header no-print"><div class="container"><span class="brand"><span class="dot"></span>Shop desk</span><a class="btn secondary small" href="index.html">View website</a></div></header>
+<main><div class="container section stack" id="app"></div></main>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  const { h, api, rupee, dayLabel, when, SLOT, mapsLink, waLink, pageUrl, busy, session, toast } = WW;
+  const app = document.getElementById('app');
+  const adm = (path, method = 'GET', body) => api(path, { method, body, headers: { authorization: 'Bearer ' + session.get('ww_admin') } });
+  const track = (code) => pageUrl('track.html') + '#' + code;
+  let tab = session.get('ww_admin_tab') || 'todo';
+
+  // ---------------------------------------------------------------- login
+  function login(msg) {
+    const pw = h('input', { type: 'password', id: 'pw', autocomplete: 'current-password', placeholder: 'Admin password' });
+    const err = h('div', { class: 'error-box ' + (msg ? '' : 'hidden'), role: 'alert' }, msg || '');
+    app.replaceChildren(h('form', { class: 'card stack', style: 'max-width:420px', onsubmit: async (e) => {
+      e.preventDefault();
+      session.set('ww_admin', pw.value);
+      try { await adm('/api/admin/summary'); start(); } catch (x) { session.del('ww_admin'); err.textContent = x.message; err.classList.remove('hidden'); }
+    } }, h('h2', {}, 'Shop desk'), h('p', { class: 'muted' }, 'Enter the admin password you set when deploying (ADMIN_TOKEN).'),
+      h('div', { class: 'field' }, h('label', { for: 'pw' }, 'Password'), pw), err, h('button', { class: 'btn', type: 'submit' }, 'Open')));
+  }
+
+  const TABS = [['todo', 'To do'], ['weekend', 'Weekend plan'], ['catalog', 'Catalogue'], ['drivers', 'Drivers'], ['orders', 'All orders']];
+  const body = h('div', { class: 'stack' });
+  function start() {
+    app.replaceChildren(
+      h('div', { class: 'tabs no-print', role: 'tablist' }, TABS.map(([k, l]) => h('button', { role: 'tab', 'aria-selected': String(k === tab), onclick: () => { tab = k; session.set('ww_admin_tab', k); start(); } }, l))),
+      body);
+    ({ todo, weekend, catalog, drivers, orders }[tab])();
+  }
+  async function guard(fn) {
+    try { await fn(); } catch (e) { if (e.status === 401) { session.del('ww_admin'); login('Wrong or expired password.'); } else body.replaceChildren(h('div', { class: 'error-box' }, e.message)); }
+  }
+  const field = (label, input) => h('div', { class: 'field' }, h('label', {}, label), input);
+  const num = (ph, v) => h('input', { type: 'number', min: '0', inputmode: 'numeric', placeholder: ph, value: v ?? '' });
+  const who = (o) => `${o.customer_name} - ${o.customer_phone}`;
+  const itemTitle = (o) => o.type === 'retail' ? (o.item_title || [o.item_brand, o.item_model].filter(Boolean).join(' ')) : [o.watch_brand, o.watch_model].filter(Boolean).join(' ');
+  const wa = (o, text) => h('a', { class: 'btn secondary small', target: '_blank', rel: 'noopener noreferrer', href: waLink(o.customer_phone, text) }, 'WhatsApp customer');
+  async function run(btn, fn, okMsg, reload) {
+    busy(btn, true, 'Saving...');
+    try { await fn(); toast(okMsg); if (reload) reload(); } catch (e) { toast(e.message); busy(btn, false); }
+  }
+
+  // ---------------------------------------------------------------- TO DO
+  function todo() {
+    guard(async () => {
+      const s = await adm('/api/admin/summary');
+      const parts = [];
+      const waiting = Object.fromEntries(s.waitingLegs.map((w) => [w.kind, w.n]));
+      const m = s.money;
+      parts.push(h('div', { class: 'grid cols-3' },
+        stat('Trips waiting for the weekend', (waiting.pickup || 0) + (waiting.delivery || 0) + (waiting.return || 0), `${waiting.pickup || 0} pickups, ${waiting.delivery || 0} deliveries, ${waiting.return || 0} returns`),
+        stat('Next dispatch', s.weekendBatch.label, 'Builds automatically Fri 8 pm; or build now in Weekend plan'),
+        stat('Last 30 days', rupee(m.concierge_margin + m.retail_margin), `${m.orders} orders. Watch margin ${rupee(m.retail_margin)} + delivery margin ${rupee(m.concierge_margin)}`)));
+      if (s.flagged.length) parts.push(h('div', { class: 'notice' }, 'Needs attention: ', s.flagged.map((f) => `${f.code} (${f.attempts >= 2 ? 'failed ' + f.attempts + ' visits' : 'no map location'})`).join(', ')));
+
+      parts.push(h('h2', {}, `Price new requests (${s.toPrice.length})`));
+      parts.push(...(s.toPrice.length ? s.toPrice.map(priceCard) : [h('p', { class: 'muted' }, 'Nothing waiting.')]));
+      parts.push(h('h2', {}, `Inspect & quote repairs (${s.toDiagnose.length})`));
+      parts.push(...(s.toDiagnose.length ? s.toDiagnose.map(repairCard) : [h('p', { class: 'muted' }, 'No watches waiting for inspection.')]));
+      parts.push(h('h2', {}, `Repairs in progress (${s.repairing.length})`));
+      parts.push(...(s.repairing.length ? s.repairing.map(inRepairCard) : [h('p', { class: 'muted' }, 'None.')]));
+      parts.push(h('h2', {}, `Waiting for customer approval (${s.awaitingCustomer.length})`));
+      parts.push(...(s.awaitingCustomer.length ? s.awaitingCustomer.map((o) => h('div', { class: 'card row between' },
+        h('div', {}, h('b', {}, o.code), ' ', itemTitle(o), h('div', { class: 'small muted' }, `${who(o)} - total ${rupee(o.total_due)}`)),
+        wa(o, `Hello ${o.customer_name}, your quote for ${itemTitle(o)} is ready (${rupee(o.total_due)} incl. delivery). Please approve before Friday 8 pm for this weekend: ${track(o.code)}`))) : [h('p', { class: 'muted' }, 'None.')]));
+      body.replaceChildren(...parts);
+    });
+  }
+  const stat = (label, big, sub) => h('div', { class: 'card stat' }, h('div', { class: 'small muted' }, label), h('b', {}, String(big)), h('div', { class: 'small muted' }, sub));
+
+  function priceCard(o) {
+    const mrp = num('MRP printed on the tag', o.mrp);
+    const price = num('Your selling price (≤ MRP)');
+    const base = num('Distributor cost (private)');
+    const err = h('div', { class: 'error-box hidden' });
+    const send = h('button', { class: 'btn small', type: 'button', onclick: (e) => {
+      err.classList.add('hidden');
+      run(e.currentTarget, () => adm(`/api/admin/orders/${o.code}/quote`, 'POST', { mrp: mrp.value, price: price.value, base_cost: base.value || undefined }), 'Price sent to customer', todo)
+        .then(() => {}).catch(() => {});
+    } }, 'Send price');
+    const nope = h('button', { class: 'btn danger small', type: 'button', onclick: (e) => { if (confirm('Mark as not available?')) run(e.currentTarget, () => adm(`/api/admin/orders/${o.code}/quote`, 'POST', { available: false }), 'Marked unavailable', todo); } }, 'Not available');
+    return h('div', { class: 'card stack' },
+      h('div', { class: 'row between' }, h('div', {}, h('b', {}, o.code), ' - ', itemTitle(o) || 'Watch', h('div', { class: 'small muted' }, who(o))), o.geo_status === 'unknown' ? h('span', { class: 'chip warn' }, 'no map location') : null),
+      o.item_url ? h('a', { href: o.item_url, target: '_blank', rel: 'noopener noreferrer', class: 'small', style: 'overflow-wrap:anywhere' }, o.item_url) : null,
+      o.item_image ? h('img', { src: o.item_image, alt: '', style: 'height:80px;object-fit:contain;align-self:start', referrerpolicy: 'no-referrer' }) : null,
+      h('div', { class: 'grid cols-3' }, field('MRP', mrp), field('Selling price', price), field('Your cost', base)),
+      h('div', { class: 'row' }, send, nope, wa(o, `Hello ${o.customer_name}, we are checking the price of ${itemTitle(o)}. We will update you here: ${track(o.code)}`)),
+      err);
+  }
+
+  function repairCard(o) {
+    const diag = h('textarea', { placeholder: 'What is wrong? e.g. Movement damaged, needs replacement', maxlength: '600' });
+    const parts = h('input', { type: 'text', placeholder: 'Parts needed (optional)', maxlength: '300' });
+    const cost = num('Cost estimate (₹)');
+    return h('div', { class: 'card stack' },
+      h('div', {}, h('b', {}, o.code), ' - ', itemTitle(o), h('div', { class: 'small muted' }, `${who(o)} - Problem: ${o.issue}`),
+        o.condition_video_ref ? h('div', { class: 'small' }, 'Pickup video: ', /^https?:/.test(o.condition_video_ref) ? h('a', { href: o.condition_video_ref, target: '_blank', rel: 'noopener noreferrer' }, o.condition_video_ref) : o.condition_video_ref) : null),
+      field('Diagnosis', diag), field('Parts', parts), field('Estimate', cost),
+      h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: (e) => run(e.currentTarget, () => adm(`/api/admin/orders/${o.code}/quote`, 'POST', { diagnosis: diag.value, parts_needed: parts.value, price: cost.value }), 'Estimate sent', todo) }, 'Send estimate'),
+        wa(o, `Hello ${o.customer_name}, our technician has checked your watch. Please see the estimate and approve: ${track(o.code)}`)));
+  }
+
+  function inRepairCard(o) {
+    return h('div', { class: 'card row between' }, h('div', {}, h('b', {}, o.code), ' ', itemTitle(o), h('div', { class: 'small muted' }, `${who(o)} - ${o.diagnosis || ''}`)),
+      h('button', { class: 'btn good small', type: 'button', onclick: (e) => run(e.currentTarget, () => adm(`/api/admin/orders/${o.code}/repaired`, 'POST'), 'Marked repaired - return trip queued', todo) }, 'Repair finished'));
+  }
+
+  // ---------------------------------------------------------------- WEEKEND
+  function weekend() {
+    guard(async () => {
+      const [s, dr] = await Promise.all([adm('/api/admin/summary'), adm('/api/admin/drivers')]);
+      const sat = h('input', { type: 'date', value: s.weekendBatch.saturday });
+      const active = dr.drivers.filter((d) => d.active);
+      const checks = active.map((d) => h('label', {}, h('input', { type: 'checkbox', value: d.id, checked: true }), d.name));
+      const out = h('div', { class: 'stack' });
+      const build = h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+        busy(e.currentTarget, true, 'Planning...');
+        try {
+          const ids = checks.map((l) => l.firstChild).filter((i) => i.checked).map((i) => Number(i.value));
+          const r = await adm('/api/admin/dispatch/build', 'POST', { saturday: sat.value, driver_ids: active.length ? ids : undefined });
+          toast(`${r.scheduled} trips planned`);
+          await showManifest(out, sat.value);
+        } catch (x) { toast(x.message); } finally { busy(e.currentTarget, false); }
+      } }, 'Build route plan');
+      body.replaceChildren(
+        h('div', { class: 'card stack no-print' },
+          h('h2', {}, 'Weekend plan'),
+          h('p', { class: 'muted' }, 'This runs by itself every Friday at 8 pm. Run it again whenever you approve something late: trips that have not started are re-planned, trips already done are never touched.'),
+          field('Saturday of the weekend', sat),
+          active.length ? h('div', {}, h('div', { class: 'label small' }, 'Drivers available this weekend'), h('div', { class: 'choices' }, checks)) : h('div', { class: 'notice' }, 'No drivers added yet - all trips go on your own list. Add drivers in the Drivers tab.'),
+          h('div', { class: 'row' }, build, h('button', { class: 'btn secondary', type: 'button', onclick: () => showManifest(out, sat.value) }, 'Show current plan'), h('button', { class: 'btn secondary', type: 'button', onclick: () => window.print() }, 'Print'))),
+        out);
+      showManifest(out, sat.value);
+    });
+  }
+
+  async function showManifest(out, saturday) {
+    const m = await adm('/api/admin/dispatch?saturday=' + saturday);
+    if (!m.stops.length) { out.replaceChildren(h('p', { class: 'muted' }, 'No trips planned for this weekend yet.')); return; }
+    const blocks = [];
+    for (const day of [m.saturday, m.sunday]) {
+      const dayStops = m.stops.filter((s) => s.day_date === day);
+      if (!dayStops.length) continue;
+      blocks.push(h('h2', {}, `${m.labels[day]} - ${dayStops.length} stops`));
+      const names = [...new Set(dayStops.map((s) => s.driver_name || 'Founder (no driver)'))];
+      for (const n of names) {
+        const list = dayStops.filter((s) => (s.driver_name || 'Founder (no driver)') === n);
+        const cash = list.filter((s) => s.status !== 'done').reduce((a, s) => a + s.collect_amount, 0);
+        blocks.push(h('div', { class: 'card stack' },
+          h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, n), h('span', { class: 'chip' }, `${list.length} ${list.length === 1 ? 'stop' : 'stops'} - still to collect ${rupee(cash)}`)),
+          list.map((s) => h('div', { class: 'row', style: 'flex-wrap:nowrap;align-items:flex-start;border-top:1px dashed var(--line);padding-top:8px' },
+            h('span', { class: 'seq' }, s.seq),
+            h('div', { style: 'flex:1;min-width:0' },
+              h('div', {}, h('b', {}, { pickup: 'PICKUP', delivery: 'DELIVER', return: 'RETURN' }[s.kind]), ' ', s.code, ' - ', s.type === 'retail' ? s.item_title : `${s.watch_brand} ${s.watch_model || ''}`),
+              h('div', { class: 'small' }, `${s.customer_name} - `, h('a', { href: 'tel:' + s.customer_phone }, s.customer_phone)),
+              h('div', { class: 'small muted' }, [s.address, s.landmark].filter(Boolean).join(' - ')),
+              h('div', { class: 'small' }, `${SLOT[s.slot] || ''}${s.collect_amount ? ` - collect ${rupee(s.collect_amount)} (${s.payment_method})` : ''}`, ' ',
+                h('span', { class: 'chip ' + (s.status === 'done' ? 'good' : '') }, s.status))),
+            h('a', { class: 'btn secondary small no-print', href: mapsLink(s), target: '_blank', rel: 'noopener noreferrer' }, 'Map')))));
+      }
+    }
+    out.replaceChildren(...blocks);
+  }
+
+  // ---------------------------------------------------------------- CATALOGUE
+  function catalog() {
+    guard(async () => {
+      const { products } = await adm('/api/admin/products');
+      const f = Object.fromEntries(['brand', 'model_no', 'name', 'dial_shape', 'color', 'strap', 'mrp', 'official_url'].map((k) => [k, h('input', { type: k === 'mrp' ? 'number' : 'text', min: '1', maxlength: '160' })]));
+      const csv = h('textarea', { placeholder: 'Brand,Model No,Description,Dial Shape,Colour,Strap,MRP,Link\nCasio,F-91W-1,Classic digital,Square,Black,Resin,1495,https://...', style: 'min-height:140px;font-family:monospace;font-size:.85rem' });
+      const file = h('input', { type: 'file', accept: '.csv,text/csv', onchange: async () => { if (file.files[0]) csv.value = await file.files[0].text(); } });
+      body.replaceChildren(
+        h('div', { class: 'card stack' }, h('h2', {}, 'Import your distributor sheet'),
+          h('p', { class: 'muted' }, 'Export the sheet from Excel / Google Sheets as CSV. Needed columns: Brand, Model (or SKU), MRP. Optional: Description, Dial Shape, Colour, Strap, Link. Re-importing updates existing models.'),
+          file, csv,
+          h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+            busy(e.currentTarget, true, 'Importing...');
+            try { const r = await adm('/api/admin/products/import', 'POST', { csv: csv.value }); toast(`${r.imported} watches imported` + (r.errors.length ? `, ${r.errors.length} lines skipped` : '')); if (r.errors.length) alert(r.errors.join('\n')); catalog(); }
+            catch (x) { toast(x.message); busy(e.currentTarget, false); }
+          } }, 'Import CSV')),
+        h('div', { class: 'card stack' }, h('h2', {}, 'Add one watch'),
+          h('div', { class: 'grid cols-3' }, field('Brand', f.brand), field('Model number', f.model_no), field('MRP (₹)', f.mrp), field('Name / description', f.name), field('Dial shape', f.dial_shape), field('Colour', f.color), field('Strap', f.strap), field('Official page link', f.official_url)),
+          h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => adm('/api/admin/products', 'POST', Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.value]))), 'Saved', catalog) }, 'Save watch')),
+        h('h2', {}, `Catalogue (${products.length})`),
+        products.length ? h('div', { class: 'card', style: 'overflow-x:auto' }, h('table', { class: 't' }, h('tbody', {}, products.map((p) => h('tr', {},
+          h('td', { style: 'text-align:left' }, h('b', {}, p.brand), ' ', p.model_no, h('div', { class: 'small muted' }, [p.name, p.color, p.strap].filter(Boolean).join(' - '))),
+          h('td', {}, rupee(p.mrp)),
+          h('td', {}, h('button', { class: 'btn secondary small', type: 'button', onclick: (e) => run(e.currentTarget, () => adm(`/api/admin/products/${p.id}/active`, 'POST', { active: !p.active }), p.active ? 'Hidden' : 'Visible', catalog) }, p.active ? 'Hide' : 'Show'))))))) : h('p', { class: 'muted' }, 'No watches yet.'));
+    });
+  }
+
+  // ---------------------------------------------------------------- DRIVERS
+  function drivers() {
+    guard(async () => {
+      const { drivers: list } = await adm('/api/admin/drivers');
+      const name = h('input', { type: 'text', maxlength: '60', placeholder: 'e.g. Ravi Kumar' });
+      const phone = h('input', { type: 'tel', maxlength: '16', placeholder: '10-digit (optional)' });
+      body.replaceChildren(
+        h('div', { class: 'card stack' }, h('h2', {}, 'Add a delivery partner'),
+          h('div', { class: 'grid cols-2' }, field('Name', name), field('Mobile', phone)),
+          h('button', { class: 'btn', type: 'button', onclick: (e) => run(e.currentTarget, () => adm('/api/admin/drivers', 'POST', { name: name.value, phone: phone.value || undefined }), 'Driver added', drivers) }, 'Add driver'),
+          h('p', { class: 'hint' }, `They earn the flat per-trip payout set in wrangler.toml (default ₹40). Each driver gets a private link - no login or app needed.`)),
+        h('h2', {}, 'Delivery partners'),
+        ...(list.length ? list.map((d) => {
+          const link = pageUrl('driver.html') + '#t=' + d.token;
+          return h('div', { class: 'card stack' },
+            h('div', { class: 'row between' }, h('div', {}, h('b', {}, d.name), d.phone ? h('span', { class: 'muted' }, ' - ' + d.phone) : null), h('span', { class: 'chip ' + (d.active ? 'good' : 'bad') }, d.active ? 'active' : 'off')),
+            h('div', { class: 'small muted', style: 'overflow-wrap:anywhere' }, link),
+            h('div', { class: 'row' },
+              h('button', { class: 'btn secondary small', type: 'button', onclick: () => navigator.clipboard?.writeText(link).then(() => toast('Link copied')) }, 'Copy link'),
+              d.phone ? h('a', { class: 'btn secondary small', target: '_blank', rel: 'noopener noreferrer', href: waLink(d.phone, `Hi ${d.name}, this is your private delivery page for the weekend. Keep it to yourself: ${link}`) }, 'Send on WhatsApp') : null,
+              h('button', { class: 'btn danger small', type: 'button', onclick: (e) => run(e.currentTarget, () => adm(`/api/admin/drivers/${d.id}/active`, 'POST', { active: !d.active }), 'Updated', drivers) }, d.active ? 'Switch off' : 'Switch on')));
+        }) : [h('p', { class: 'muted' }, 'No drivers yet. With none, every trip is on your own list.')]));
+    });
+  }
+
+  // ---------------------------------------------------------------- ORDERS
+  function orders() {
+    const q = h('input', { type: 'search', placeholder: 'Search code, name or phone' });
+    const list = h('div', { class: 'stack' });
+    const detail = h('div', { class: 'stack' });
+    const load = () => guard(async () => {
+      const { orders: rows } = await adm('/api/admin/orders?q=' + encodeURIComponent(q.value));
+      list.replaceChildren(...(rows.length ? rows.map((o) => h('div', { class: 'card row between' },
+        h('div', {}, h('b', {}, o.code), ' ', h('span', { class: 'chip' }, o.status), h('div', { class: 'small muted' }, `${o.customer_name} - ${o.customer_phone} - ${o.item_title || [o.watch_brand, o.watch_model].filter(Boolean).join(' ')}`)),
+        h('button', { class: 'btn secondary small', type: 'button', onclick: () => open(o.code) }, 'Open'))) : [h('p', { class: 'muted' }, 'No orders found.')]));
+    });
+    async function open(code) {
+      const d = await adm('/api/admin/orders/' + code);
+      const o = d.order;
+      const ref = h('input', { type: 'text', placeholder: 'Video link or reference', value: o.condition_video_ref || '' });
+      detail.replaceChildren(h('div', { class: 'card stack' },
+        h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, `${o.code} - ${o.status}`), h('button', { class: 'x', type: 'button', onclick: () => detail.replaceChildren() }, '×')),
+        h('div', { class: 'small' }, `${d.customer.name} - ${d.customer.phone}`), h('div', { class: 'small muted' }, `${o.address}${o.landmark ? ' - ' + o.landmark : ''}`),
+        h('div', {}, `Quoted ${o.quoted_price != null ? rupee(o.quoted_price) : '-'} + delivery ${rupee(o.delivery_fee)} = ${o.total_due != null ? rupee(o.total_due) : '-'} (${o.payment_method})`),
+        o.type === 'repair' ? h('div', { class: 'row' }, ref, h('button', { class: 'btn secondary small', type: 'button', onclick: (e) => run(e.currentTarget, () => adm(`/api/admin/orders/${o.code}/video`, 'POST', { ref: ref.value }), 'Saved', () => open(code)) }, 'Save video ref')) : null,
+        h('b', {}, 'Trips'), d.legs.map((l) => h('div', { class: 'small' }, `${l.kind} - ${l.status}${l.day_date ? ' - ' + dayLabel(l.day_date) : ''}${l.driver_name ? ' - ' + l.driver_name : ''}${l.attempts ? ` - ${l.attempts} failed` : ''}`)),
+        h('b', {}, 'Timeline'), h('ul', { class: 'timeline' }, d.events.map((e) => h('li', {}, h('time', {}, `${when(e.at)} - ${e.actor}`), e.text))),
+        !['delivered', 'cancelled', 'declined', 'unavailable'].includes(o.status) ? h('button', { class: 'btn danger small', type: 'button', onclick: (e) => { if (confirm('Cancel this order?')) run(e.currentTarget, () => adm(`/api/admin/orders/${o.code}/cancel`, 'POST'), 'Cancelled', () => { open(code); load(); }); } }, 'Cancel order') : null));
+      detail.scrollIntoView({ behavior: 'smooth' });
+    }
+    q.addEventListener('input', () => { clearTimeout(q._t); q._t = setTimeout(load, 300); });
+    body.replaceChildren(q, detail, list);
+    load();
+  }
+
+  if (session.get('ww_admin')) guard(async () => { await adm('/api/admin/summary'); start(); }); else login();
+})();
+</script>
+</body>
+</html>

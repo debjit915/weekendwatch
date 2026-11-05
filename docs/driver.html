@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Delivery list - Weekend Watch</title>
+  <link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+<header class="site-header"><div class="container"><span class="brand"><span class="dot"></span><span id="who">Delivery list</span></span><button class="btn secondary small" id="refresh" type="button">Refresh</button></div></header>
+<main><div class="container section stack" id="app" style="max-width:640px"><p class="muted">Loading your stops...</p></div></main>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(function () {
+  const { h, api, rupee, SLOT, mapsLink, busy, session, toast } = WW;
+  const app = document.getElementById('app');
+
+  // The token lives in the URL fragment (#t=...), which browsers never send to any server.
+  const m = location.hash.match(/t=([a-z0-9]+)/i);
+  if (m) { session.set('ww_driver', m[1]); history.replaceState(null, '', location.pathname + location.search); }
+  const token = session.get('ww_driver');
+  const call = (path, method = 'GET', body) => api(path, { method, body, headers: { 'x-driver-token': token } });
+
+  async function load() {
+    if (!token) { app.replaceChildren(h('div', { class: 'error-box' }, 'Open the private link the shop sent you.')); return; }
+    try {
+      const d = await call('/api/driver/manifest');
+      document.getElementById('who').textContent = 'Hi ' + d.driver.name.split(' ')[0];
+      render(d);
+    } catch (e) {
+      app.replaceChildren(h('div', { class: 'error-box' }, e.status === 401 ? 'This link is not valid any more. Ask the shop for a new one.' : e.message));
+    }
+  }
+
+  function render(d) {
+    const t = d.totals;
+    const parts = [h('div', { class: 'grid', style: 'grid-template-columns:repeat(3,1fr)' },
+      h('div', { class: 'card stat' }, h('div', { class: 'small muted' }, 'Done'), h('b', {}, `${t.done}/${t.stops}`)),
+      h('div', { class: 'card stat' }, h('div', { class: 'small muted' }, 'To collect'), h('b', {}, rupee(t.to_collect))),
+      h('div', { class: 'card stat' }, h('div', { class: 'small muted' }, 'Earned'), h('b', {}, rupee(t.earnings))))];
+    if (!d.stops.length) parts.push(h('div', { class: 'card' }, h('p', {}, 'No stops for you this weekend yet.'), h('p', { class: 'muted small' }, `The plan is built on Friday at 8 pm. Weekend: ${d.labels[d.saturday]} and ${d.labels[d.sunday]}.`)));
+    let key = '';
+    for (const s of d.stops) {
+      const k = s.day_date + s.slot;
+      if (k !== key) { key = k; parts.push(h('h2', { style: 'margin-top:12px' }, `${d.labels[s.day_date]} - ${(SLOT[s.slot] || '').split(' (')[0]}`)); }
+      parts.push(stopCard(s));
+    }
+    app.replaceChildren(...parts);
+  }
+
+  function stopCard(s) {
+    const kind = { pickup: 'PICK UP', delivery: 'DELIVER', return: 'RETURN' }[s.kind];
+    const title = s.type === 'retail' ? s.item_title : `${s.watch_brand} ${s.watch_model || ''}`.trim();
+    const panel = h('div', { class: 'stack hidden' });
+    const card = h('div', { class: 'card stop stack ' + (s.status === 'done' ? 'done' : s.status === 'out' ? 'out' : '') },
+      h('div', { class: 'row', style: 'flex-wrap:nowrap;align-items:flex-start' },
+        h('span', { class: 'seq' }, s.seq),
+        h('div', { style: 'flex:1;min-width:0' },
+          h('div', {}, h('span', { class: 'chip ' + (s.kind === 'pickup' ? 'info' : 'warn') }, kind), ' ', h('b', {}, s.code)),
+          h('div', {}, title),
+          s.kind === 'pickup' && s.issue ? h('div', { class: 'small muted' }, 'Problem: ' + s.issue) : null),
+        s.status === 'done' ? h('span', { class: 'chip good' }, 'done') : null),
+      h('div', {}, h('b', {}, s.customer_name), ' - ', h('a', { href: 'tel:' + s.customer_phone }, s.customer_phone)),
+      h('div', {}, s.address, s.landmark ? h('div', { class: 'small muted' }, 'Landmark: ' + s.landmark) : null),
+      s.notes ? h('div', { class: 'small notice' }, 'Note: ' + s.notes) : null,
+      s.collect_amount > 0 ? h('div', { class: 'row between' }, h('span', {}, `Collect (${s.payment_method === 'UPI' ? 'customer chose UPI' : 'cash'})`), h('span', { class: 'big-amount' }, rupee(s.collect_amount))) : null,
+      s.attempts > 0 ? h('div', { class: 'small muted' }, `Previous failed visits: ${s.attempts}`) : null);
+
+    if (s.status !== 'done') {
+      const actions = h('div', { class: 'row' },
+        h('a', { class: 'btn secondary', href: mapsLink(s), target: '_blank', rel: 'noopener noreferrer' }, 'Navigate'),
+        h('a', { class: 'btn secondary', href: 'tel:' + s.customer_phone }, 'Call'));
+      if (s.status === 'scheduled') actions.append(h('button', { class: 'btn', type: 'button', onclick: async (e) => { busy(e.currentTarget, true, '...'); try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', { action: 'out' }); toast('Customer told you are on the way'); load(); } catch (x) { toast(x.message); busy(e.currentTarget, false); } } }, 'Start trip'));
+      actions.append(h('button', { class: 'btn good', type: 'button', onclick: () => panel.classList.toggle('hidden') }, s.kind === 'pickup' ? 'Collected' : 'Delivered'));
+      actions.append(h('button', { class: 'btn danger', type: 'button', onclick: () => failPanel(s, panel) }, "Couldn't complete"));
+      card.append(actions, panel);
+      donePanel(s, panel);
+    }
+    return card;
+  }
+
+  function donePanel(s, panel) {
+    const err = h('div', { class: 'error-box hidden', role: 'alert' });
+    let video, amount, method;
+    const kids = [];
+    if (s.kind === 'pickup') {
+      kids.push(h('div', { class: 'notice' }, 'Before you take the watch: record a 10-second video showing all sides, the dial, glass and strap, and any scratches. Send it to the shop group with the job number as the caption.'));
+      video = h('input', { type: 'text', maxlength: '300', placeholder: 'Video link, or e.g. "WhatsApp group, ' + s.code + '"' });
+      kids.push(h('div', { class: 'field' }, h('label', {}, 'Where is the video? (required)'), video));
+    } else if (s.collect_amount > 0) {
+      amount = h('input', { type: 'number', inputmode: 'numeric', value: s.collect_amount, min: '0' });
+      method = h('select', {}, h('option', { value: 'COD', ...(s.payment_method !== 'UPI' ? { selected: true } : {}) }, 'Cash'), h('option', { value: 'UPI', ...(s.payment_method === 'UPI' ? { selected: true } : {}) }, 'UPI'));
+      kids.push(h('div', { class: 'grid cols-2' }, h('div', { class: 'field' }, h('label', {}, 'Amount received (₹)'), amount), h('div', { class: 'field' }, h('label', {}, 'Paid by'), method)));
+    }
+    const go = h('button', { class: 'btn good block', type: 'button', onclick: async (e) => {
+      err.classList.add('hidden');
+      const payload = { action: 'done' };
+      if (video) payload.video_ref = video.value;
+      if (amount) { payload.collected_amount = amount.value; payload.method = method.value; }
+      busy(e.currentTarget, true, 'Saving...');
+      try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', payload); toast('Saved. Well done!'); load(); }
+      catch (x) { err.textContent = x.message; err.classList.remove('hidden'); busy(e.currentTarget, false); }
+    } }, s.kind === 'pickup' ? 'Confirm: watch collected' : 'Confirm: delivered');
+    panel.append(...kids, err, go);
+  }
+
+  function failPanel(s, panel) {
+    panel.classList.remove('hidden');
+    const reason = h('select', {}, [['not_home', 'Nobody at home'], ['unreachable', 'Phone not reachable'], ['address_issue', 'Cannot find the address'], ['refused', 'Customer refused'], ['other', 'Other']].map(([v, l]) => h('option', { value: v }, l)));
+    const note = h('input', { type: 'text', maxlength: '300', placeholder: 'Note (optional)' });
+    panel.replaceChildren(h('div', { class: 'field' }, h('label', {}, 'What happened?'), reason), h('div', { class: 'field' }, note),
+      h('button', { class: 'btn danger block', type: 'button', onclick: async (e) => {
+        if (!confirm('Move this to next weekend?')) return;
+        busy(e.currentTarget, true, 'Saving...');
+        try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', { action: 'failed', reason: reason.value, note: note.value || undefined }); toast('Moved to next weekend'); load(); }
+        catch (x) { toast(x.message); busy(e.currentTarget, false); }
+      } }, 'Move to next weekend'));
+  }
+
+  document.getElementById('refresh').onclick = load;
+  load();
+  setInterval(() => { if (!document.hidden && !app.querySelector('input:focus, select:focus')) load(); }, 90000);
+})();
+</script>
+</body>
+</html>
