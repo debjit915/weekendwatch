@@ -93,15 +93,23 @@
           h('nav', { class: 'nav', 'aria-label': 'Main' },
             links.map(([href, label, key]) => h('a', { href, ...(key === active ? { 'aria-current': 'page' } : {}) }, label))))));
     const phone = h('span', {});
+    const radius = h('b', {}, '10 km');
+    const shopLine = h('div', { style: 'margin-top:6px' });
     document.body.append(
       h('footer', { class: 'site-footer' },
         h('div', { class: 'container' },
-          h('div', {}, 'Weekend-only doorstep delivery and watch repair within ', h('b', {}, '10 km'), ' of our shop. '),
+          h('div', {}, 'Weekend-only doorstep delivery and watch repair within ', radius, ' of our shop. '),
           phone,
+          shopLine,
           h('div', { class: 'small', style: 'margin-top:6px' }, 'Prices for new watches never exceed MRP; the delivery charge is shown separately.'))));
     config().then((c) => {
       brandName.textContent = c.shopName;
+      radius.textContent = c.radiusKm + ' km';
       if (c.shopPhone) phone.append('Questions? Call ', h('a', { href: 'tel:' + c.shopPhone }, c.shopPhone), '.');
+      if (c.shopAddress) {
+        shopLine.append(h('b', {}, c.shopName), ' - ', c.shopAddress, ' ',
+          h('a', { href: 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(c.shopName + ' ' + c.shopAddress), target: '_blank', rel: 'noopener noreferrer' }, 'Open in Maps'));
+      }
     }).catch(() => {});
   }
 

@@ -7,3 +7,6 @@ node_modules/
 worker/
 BUSINESS_PLAN.md
 DEPLOY_GUIDE.md
+
+# Price lists stay on this computer
+*.csv
