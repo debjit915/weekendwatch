@@ -3,7 +3,9 @@
 (function () {
   const cfg = window.WW_CONFIG || {};
   const isLocal = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname);
-  const API = (cfg.API_BASE || (isLocal ? 'http://localhost:8787' : '')).replace(/\/+$/, '');
+  // Testing on your own computer: localStorage "ww_dev_api" can point the site at a local API.
+  const devApi = (() => { try { return isLocal ? localStorage.getItem('ww_dev_api') : null; } catch { return null; } })();
+  const API = (devApi || cfg.API_BASE || (isLocal ? 'http://localhost:8787' : '')).replace(/\/+$/, '');
 
   /** Tiny DOM builder: h('div', {class:'x', onclick:fn}, 'text', child, [children]) */
   function h(tag, props, ...kids) {

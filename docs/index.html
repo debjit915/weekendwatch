@@ -6,6 +6,9 @@
   <title>Weekend Watch - watches delivered to your door</title>
   <meta name="description" content="Order any watch and get it delivered to your door on the weekend. Local pickup and doorstep return for watch repairs.">
   <link rel="stylesheet" href="assets/app.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <meta name="theme-color" content="#17324d">
 </head>
 <body>
 <main>
@@ -252,6 +255,7 @@
       h('p', {}, 'Your order code is'),
       h('div', { class: 'big-amount' }, res.code),
       h('p', { class: 'muted' }, 'Save it. You will need this code and your mobile number to check the price, approve it and follow the delivery.'),
+      h('div', { class: 'notice' }, 'Tap "Track this order" and switch on notifications, so your phone tells you when the price is ready. Otherwise our shop will message you on WhatsApp.'),
       h('div', { class: 'row' },
         h('a', { class: 'btn', href: 'track.html#' + res.code }, 'Track this order'),
         h('button', { class: 'btn secondary', type: 'button', onclick: () => { navigator.clipboard?.writeText(res.code).then(() => WW.toast('Code copied')).catch(() => {}); } }, 'Copy code')));

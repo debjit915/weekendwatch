@@ -6,6 +6,9 @@
   <title>Watch repair with doorstep pickup - Weekend Watch</title>
   <meta name="description" content="Book a watch repair. We collect it from your door on the weekend, our technician fixes it, and we bring it back.">
   <link rel="stylesheet" href="assets/app.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <meta name="theme-color" content="#17324d">
 </head>
 <body>
 <main>
@@ -88,6 +91,7 @@
         h('p', {}, 'Your job card number is'),
         h('div', { class: 'big-amount' }, res.code),
         h('p', { class: 'muted' }, 'Save this number. Use it with your mobile number to see the estimate and follow the pickup and return.'),
+        h('div', { class: 'notice' }, 'Tap "Track this repair" and switch on notifications, so your phone tells you when the estimate is ready and when we are on the way. Otherwise our shop will message you on WhatsApp.'),
         h('a', { class: 'btn', href: 'track.html#' + res.code }, 'Track this repair'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (e) {

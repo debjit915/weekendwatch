@@ -33,13 +33,21 @@
       h('div', { class: 'field' }, h('label', { for: 'pw' }, 'Password'), pw), err, h('button', { class: 'btn', type: 'submit' }, 'Open')));
   }
 
-  const TABS = [['todo', 'To do'], ['weekend', 'Weekend plan'], ['catalog', 'Catalogue'], ['drivers', 'Drivers'], ['orders', 'All orders']];
+  const TABS = [['todo', 'To do'], ['messages', 'Messages'], ['weekend', 'Weekend plan'], ['catalog', 'Catalogue'], ['drivers', 'Drivers'], ['orders', 'All orders']];
   const body = h('div', { class: 'stack' });
+  let msgBtn = null;
+  function setBadge(n) { if (msgBtn) msgBtn.textContent = n > 0 ? `Messages (${n})` : 'Messages'; }
   function start() {
+    msgBtn = null;
     app.replaceChildren(
-      h('div', { class: 'tabs no-print', role: 'tablist' }, TABS.map(([k, l]) => h('button', { role: 'tab', 'aria-selected': String(k === tab), onclick: () => { tab = k; session.set('ww_admin_tab', k); start(); } }, l))),
+      h('div', { class: 'tabs no-print', role: 'tablist' }, TABS.map(([k, l]) => {
+        const b = h('button', { role: 'tab', 'aria-selected': String(k === tab), onclick: () => { tab = k; session.set('ww_admin_tab', k); start(); } }, l);
+        if (k === 'messages') msgBtn = b;
+        return b;
+      })),
       body);
-    ({ todo, weekend, catalog, drivers, orders }[tab])();
+    adm('/api/admin/summary').then((s) => setBadge(s.outboxCount)).catch(() => {});
+    ({ todo, messages, weekend, catalog, drivers, orders }[tab])();
   }
   async function guard(fn) {
     try { await fn(); } catch (e) { if (e.status === 401) { session.del('ww_admin'); login('Wrong or expired password.'); } else body.replaceChildren(h('div', { class: 'error-box' }, e.message)); }
@@ -52,6 +60,37 @@
   async function run(btn, fn, okMsg, reload) {
     busy(btn, true, 'Saving...');
     try { await fn(); toast(okMsg); if (reload) reload(); } catch (e) { toast(e.message); busy(btn, false); }
+  }
+
+
+  // ---------------------------------------------------------------- MESSAGES (one-tap WhatsApp)
+  // Updates for customers who did not turn on phone notifications / Telegram.
+  function messages() {
+    guard(async () => {
+      const [{ messages: list }, c] = await Promise.all([adm('/api/admin/outbox'), WW.config().catch(() => ({ shopName: 'our shop' }))]);
+      setBadge(list.length);
+      const box = h('div', { class: 'stack' });
+      const mark = async (m, state, card) => {
+        try { await adm(`/api/admin/outbox/${m.id}`, 'POST', { state }); card.remove(); list.splice(list.indexOf(m), 1); setBadge(list.length); if (!list.length) box.append(empty()); }
+        catch (x) { toast(x.message); }
+      };
+      const empty = () => h('p', { class: 'muted' }, 'All caught up. Nothing to send.');
+      list.forEach((m) => {
+        const text = `Hello ${m.customer_name}, update on your order ${m.code} from ${c.shopName}: ${m.text}\nSee it here: ${track(m.code)}`;
+        const card = h('div', { class: 'card stack' },
+          h('div', { class: 'row between' }, h('div', {}, h('b', {}, m.customer_name), h('span', { class: 'muted' }, ` - ${m.customer_phone} - ${m.code}`)), h('span', { class: 'small muted' }, when(m.at))),
+          h('div', {}, m.text),
+          h('div', { class: 'row' },
+            h('a', { class: 'btn good small', target: '_blank', rel: 'noopener noreferrer', href: waLink(m.customer_phone, text), onclick: () => setTimeout(() => mark(m, 'sent', card), 400) }, 'Open WhatsApp'),
+            h('button', { class: 'btn secondary small', type: 'button', onclick: () => mark(m, 'skipped', card) }, 'Skip')));
+        box.append(card);
+      });
+      if (!list.length) box.append(empty());
+      body.replaceChildren(
+        h('div', { class: 'card soft stack' }, h('h2', { style: 'margin:0' }, 'Messages to send'),
+          h('p', { class: 'muted', style: 'margin:0' }, 'These customers have not turned on phone notifications or Telegram, so tell them yourself. Tap Open WhatsApp, press Send in WhatsApp, and the message leaves this list. Customers who did turn notifications on are told automatically.')),
+        box);
+    });
   }
 
   // ---------------------------------------------------------------- TO DO
