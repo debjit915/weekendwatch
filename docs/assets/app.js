@@ -85,6 +85,7 @@
     const links = [
       ['index.html', 'Watches', 'shop'],
       ['repair.html', 'Repair', 'repair'],
+      ['about.html', 'About us', 'about'],
       ['track.html', 'Track order', 'track'],
     ];
     const brandName = h('span', {}, 'Weekend Watch');
@@ -219,10 +220,48 @@
   const waLink = (phone, text) => `https://wa.me/91${phone}?text=${encodeURIComponent(text)}`;
   const pageUrl = (file) => new URL(file, location.href).href;
 
+
+  /** URL of a photo stored by the shop (About page). */
+  const mediaUrl = (id) => `${API}/api/media/${id}`;
+
+  const blobToBase64 = (blob) => new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1]);
+    fr.onerror = () => rej(new Error('Could not read the photo'));
+    fr.readAsDataURL(blob);
+  });
+
+  /**
+   * Shrinks a photo chosen from the phone/computer so it uploads fast and fits the free database:
+   * longest side <= maxDim, JPEG, under ~450 KB, camera rotation applied. Returns base64 text.
+   */
+  async function prepImage(file, maxDim = 1200) {
+    if (!file || !/^image\//.test(file.type || '')) throw new Error('Please choose a photo (JPEG or PNG).');
+    let bmp;
+    try { bmp = await createImageBitmap(file, { imageOrientation: 'from-image' }); }
+    catch { throw new Error('This photo could not be read. Please try another one.'); }
+    let scale = Math.min(1, maxDim / Math.max(bmp.width, bmp.height));
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const hgt = Math.max(1, Math.round(bmp.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = hgt;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hgt);
+      ctx.drawImage(bmp, 0, 0, w, hgt);
+      for (const q of [0.85, 0.75, 0.62, 0.5]) {
+        const blob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', q));
+        if (blob && blob.size <= 450 * 1024) return blobToBase64(blob);
+      }
+      scale *= 0.75;
+    }
+    throw new Error('This photo is still too large after shrinking. Please try a smaller one.');
+  }
+
   function busy(btn, on, label) {
     if (on) { btn.dataset.l = btn.textContent; btn.disabled = true; if (label) btn.textContent = label; }
     else { btn.disabled = false; if (btn.dataset.l) btn.textContent = btn.dataset.l; }
   }
 
-  window.WW = { h, api, rupee, dayLabel, when, SLOT, config, toast, store, session, mountChrome, weekendBanner, deliveryForm, statusInfo, mapsLink, waLink, pageUrl, busy, API };
+  window.WW = { h, api, rupee, dayLabel, when, SLOT, config, toast, store, session, mountChrome, weekendBanner, deliveryForm, statusInfo, mapsLink, waLink, pageUrl, busy, mediaUrl, prepImage, API };
 })();

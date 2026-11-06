@@ -67,6 +67,15 @@
     </div>
   </section>
 
+  <section class="section hidden" id="owners-teaser">
+    <div class="container stack">
+      <h2>Meet the people behind your watches</h2>
+      <div id="teaserOwners" class="row" style="gap:18px"></div>
+      <p class="muted" id="teaserLine" style="margin:0"></p>
+      <div><a class="btn secondary" href="about.html">About us &amp; our shop</a></div>
+    </div>
+  </section>
+
   <section class="section">
     <div class="container stack">
       <h2>How it works</h2>
@@ -102,6 +111,18 @@
   } catch (e) {
     document.getElementById('weekend').append(h('div', { class: 'notice' }, e.message));
   }
+
+  // ---- owners teaser (only when the shop has filled in the About page)
+  api('/api/about').then(({ about }) => {
+    if (!about.owners.length) return;
+    document.getElementById('teaserOwners').replaceChildren(...about.owners.slice(0, 3).map((o) => h('div', { class: 'row', style: 'flex-wrap:nowrap;gap:12px' },
+      o.photo ? h('img', { src: WW.mediaUrl(o.photo), alt: o.name, loading: 'lazy', style: 'width:72px;height:72px;border-radius:50%;object-fit:cover;background:var(--accent-soft)' })
+              : h('div', { style: 'width:72px;height:72px;border-radius:50%;background:var(--accent-soft);display:grid;place-items:center;font-family:var(--serif);font-size:1.6rem;color:var(--accent)' }, o.name.slice(0, 1).toUpperCase()),
+      h('div', {}, h('b', {}, o.name), o.role ? h('div', { class: 'small muted' }, o.role) : null))));
+    const bits = [about.established ? `Family business since ${about.established}` : null, about.gst ? 'GST registered' : null].filter(Boolean);
+    document.getElementById('teaserLine').textContent = bits.join(' - ');
+    document.getElementById('owners-teaser').classList.remove('hidden');
+  }).catch(() => {});
 
   // ---- catalogue
   const catalog = document.getElementById('catalog');

@@ -73,7 +73,7 @@
       const actions = h('div', { class: 'row' },
         h('a', { class: 'btn secondary', href: mapsLink(s), target: '_blank', rel: 'noopener noreferrer' }, 'Navigate'),
         h('a', { class: 'btn secondary', href: 'tel:' + s.customer_phone }, 'Call'));
-      if (s.status === 'scheduled') actions.append(h('button', { class: 'btn', type: 'button', onclick: async (e) => { busy(e.currentTarget, true, '...'); try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', { action: 'out' }); toast('Customer told you are on the way'); load(); } catch (x) { toast(x.message); busy(e.currentTarget, false); } } }, 'Start trip'));
+      if (s.status === 'scheduled') actions.append(h('button', { class: 'btn', type: 'button', onclick: async (e) => { busy(e.target, true, '...'); try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', { action: 'out' }); toast('Customer told you are on the way'); load(); } catch (x) { toast(x.message); busy(e.target, false); } } }, 'Start trip'));
       actions.append(h('button', { class: 'btn good', type: 'button', onclick: () => panel.classList.toggle('hidden') }, s.kind === 'pickup' ? 'Collected' : 'Delivered'));
       actions.append(h('button', { class: 'btn danger', type: 'button', onclick: () => failPanel(s, panel) }, "Couldn't complete"));
       card.append(actions, panel);
@@ -100,9 +100,9 @@
       const payload = { action: 'done' };
       if (video) payload.video_ref = video.value;
       if (amount) { payload.collected_amount = amount.value; payload.method = method.value; }
-      busy(e.currentTarget, true, 'Saving...');
+      busy(e.target, true, 'Saving...');
       try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', payload); toast('Saved. Well done!'); load(); }
-      catch (x) { err.textContent = x.message; err.classList.remove('hidden'); busy(e.currentTarget, false); }
+      catch (x) { err.textContent = x.message; err.classList.remove('hidden'); busy(e.target, false); }
     } }, s.kind === 'pickup' ? 'Confirm: watch collected' : 'Confirm: delivered');
     panel.append(...kids, err, go);
   }
@@ -114,9 +114,9 @@
     panel.replaceChildren(h('div', { class: 'field' }, h('label', {}, 'What happened?'), reason), h('div', { class: 'field' }, note),
       h('button', { class: 'btn danger block', type: 'button', onclick: async (e) => {
         if (!confirm('Move this to next weekend?')) return;
-        busy(e.currentTarget, true, 'Saving...');
+        busy(e.target, true, 'Saving...');
         try { await call(`/api/driver/legs/${s.leg_id}`, 'POST', { action: 'failed', reason: reason.value, note: note.value || undefined }); toast('Moved to next weekend'); load(); }
-        catch (x) { toast(x.message); busy(e.currentTarget, false); }
+        catch (x) { toast(x.message); busy(e.target, false); }
       } }, 'Move to next weekend'));
   }
 

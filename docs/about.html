@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>About us - Meet the owners</title>
+  <meta name="description" content="Meet the family behind the shop: who we are, how long we have been repairing and selling watches, and where to find us.">
+  <link rel="stylesheet" href="assets/app.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <meta name="theme-color" content="#17324d">
+  <style>
+    .about-hero { padding: 40px 0 10px; }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+    .story p { font-size: 1.08rem; max-width: 70ch; }
+    .owner { display: flex; flex-direction: column; gap: 10px; padding: 0; overflow: hidden; }
+    .owner .portrait { aspect-ratio: 4 / 5; width: 100%; object-fit: cover; background: var(--accent-soft); display: block; }
+    .owner .portrait.none { display: grid; place-items: center; font-family: var(--serif); font-size: 3rem; color: var(--accent); }
+    .owner .body { padding: 4px 18px 18px; display: flex; flex-direction: column; gap: 8px; }
+    .owner h3 { margin: 0; }
+    .ticks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+    .ticks li { display: flex; gap: 10px; align-items: flex-start; }
+    .ticks li::before { content: "\2713"; color: var(--good); font-weight: 800; flex: none; }
+    .gallery { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+    .gallery figure { margin: 0; cursor: zoom-in; }
+    .gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 12px; display: block; background: var(--accent-soft); }
+    .gallery figcaption { font-size: .88rem; color: var(--muted); margin-top: 4px; }
+    #lightbox img { max-width: 100%; max-height: 80vh; display: block; margin: 0 auto; border-radius: 10px; }
+  </style>
+</head>
+<body>
+<main>
+  <section class="about-hero">
+    <div class="container stack">
+      <div id="intro"><p class="muted">Loading...</p></div>
+    </div>
+  </section>
+  <div id="sections"></div>
+</main>
+
+<dialog id="lightbox" aria-label="Photo"><div class="dialog-body" id="lbBody"></div></dialog>
+
+<script src="assets/config.js"></script>
+<script src="assets/app.js"></script>
+<script>
+(async function () {
+  const { h, api, config, mountChrome, mediaUrl, waLink } = WW;
+  mountChrome('about');
+  const intro = document.getElementById('intro');
+  const sections = document.getElementById('sections');
+
+  let about; let cfg = {};
+  try {
+    [{ about }, cfg] = await Promise.all([api('/api/about'), config().catch(() => ({}))]);
+  } catch (e) {
+    intro.replaceChildren(h('div', { class: 'error-box' }, e.message));
+    return;
+  }
+
+  const shop = cfg.shopName || 'Our shop';
+  const paragraphs = (t) => String(t || '').split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
+  const mapsHref = cfg.shopAddress ? 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(shop + ' ' + cfg.shopAddress) : null;
+  const empty = !about.headline && !about.story && !about.owners.length && !about.shop_photos.length;
+
+  // ---- top: who we are + trust badges
+  const badges = [];
+  if (about.established) badges.push(h('span', { class: 'chip' }, `Since ${about.established}`));
+  if (about.gst) badges.push(h('span', { class: 'chip good' }, `GST registered - ${about.gst}`));
+  if (about.hours) badges.push(h('span', { class: 'chip info' }, about.hours));
+  intro.replaceChildren(...[
+    h('p', { class: 'muted small', style: 'margin:0' }, shop),
+    h('h1', {}, about.headline || 'Meet the people behind your watches'),
+    badges.length ? h('div', { class: 'badges' }, badges) : null,
+    empty ? h('div', { class: 'notice' }, 'We are putting this page together. Please check back soon, or call us any time.') : null,
+  ].filter(Boolean));
+
+  const block = (title, ...kids) => h('section', { class: 'section' }, h('div', { class: 'container stack' }, h('h2', {}, title), ...kids));
+
+  // ---- our story
+  if (about.story) sections.append(block('Our story', h('div', { class: 'story' }, paragraphs(about.story).map((p) => h('p', {}, p)))));
+
+  // ---- owners
+  if (about.owners.length) {
+    sections.append(block(about.owners.length > 1 ? 'Meet the owners' : 'Meet the owner',
+      h('div', { class: 'grid cols-3' }, about.owners.map((o) => h('article', { class: 'card owner' },
+        o.photo
+          ? h('img', { class: 'portrait', src: mediaUrl(o.photo), alt: `${o.name}${o.role ? ', ' + o.role : ''}`, loading: 'lazy' })
+          : h('div', { class: 'portrait none', 'aria-hidden': 'true' }, o.name.slice(0, 1).toUpperCase()),
+        h('div', { class: 'body' },
+          h('h3', {}, o.name),
+          o.role ? h('div', { class: 'muted' }, o.role) : null,
+          o.experience ? h('div', {}, h('span', { class: 'chip' }, o.experience)) : null,
+          ...paragraphs(o.bio).map((p) => h('p', { class: 'small', style: 'margin:0' }, p)),
+          o.phone ? h('div', { class: 'row' },
+            h('a', { class: 'btn secondary small', href: 'tel:' + o.phone }, 'Call'),
+            h('a', { class: 'btn secondary small', href: waLink(o.phone, 'Hello, I found you on your website.'), target: '_blank', rel: 'noopener noreferrer' }, 'WhatsApp')) : null))))));
+  }
+
+  // ---- why trust us
+  if (about.trust_points.length) sections.append(block('Why customers trust us', h('ul', { class: 'ticks' }, about.trust_points.map((t) => h('li', {}, t)))));
+
+  // ---- shop photos
+  if (about.shop_photos.length) {
+    const dlg = document.getElementById('lightbox');
+    const lb = document.getElementById('lbBody');
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    const open = (p) => {
+      lb.replaceChildren(
+        h('div', { class: 'dialog-head' }, h('span', {}, p.caption || ''), h('button', { class: 'x', type: 'button', 'aria-label': 'Close', onclick: () => dlg.close() }, '×')),
+        h('img', { src: mediaUrl(p.media), alt: p.caption || 'Our shop' }));
+      dlg.showModal();
+    };
+    sections.append(block('Our shop',
+      h('div', { class: 'gallery' }, about.shop_photos.map((p) => h('figure', { tabindex: '0', role: 'button', 'aria-label': 'View photo: ' + (p.caption || 'shop'), onclick: () => open(p), onkeydown: (e) => { if (e.key === 'Enter') open(p); } },
+        h('img', { src: mediaUrl(p.media), alt: p.caption || 'Our shop', loading: 'lazy' }),
+        p.caption ? h('figcaption', {}, p.caption) : null)))));
+  }
+
+  // ---- visit us
+  const visit = [];
+  if (cfg.shopAddress) visit.push(h('p', { style: 'margin:0' }, h('b', {}, 'Address: '), cfg.shopAddress));
+  if (about.hours) visit.push(h('p', { style: 'margin:0' }, h('b', {}, 'Open: '), about.hours));
+  if (cfg.shopPhone) visit.push(h('p', { style: 'margin:0' }, h('b', {}, 'Phone: '), h('a', { href: 'tel:' + cfg.shopPhone }, cfg.shopPhone)));
+  if (visit.length) {
+    sections.append(block('Visit us',
+      h('div', { class: 'card soft stack' }, visit,
+        h('div', { class: 'row' },
+          mapsHref ? h('a', { class: 'btn secondary', href: mapsHref, target: '_blank', rel: 'noopener noreferrer' }, 'Open in Maps') : null,
+          cfg.shopPhone ? h('a', { class: 'btn secondary', href: waLink(cfg.shopPhone, 'Hello, I have a question about a watch.'), target: '_blank', rel: 'noopener noreferrer' }, 'WhatsApp us') : null))));
+  }
+
+  sections.append(h('section', { class: 'section' }, h('div', { class: 'container row' },
+    h('a', { class: 'btn', href: 'index.html' }, 'Browse watches'),
+    h('a', { class: 'btn secondary', href: 'repair.html' }, 'Book a repair'))));
+})();
+</script>
+</body>
+</html>

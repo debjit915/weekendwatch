@@ -177,7 +177,7 @@
 
   function updatesCard(d, n) {
     const o = d.order;
-    d.notify = d.notify || { push_devices: 0, telegram: false }; // older API without notifications
+    d.notify = d.notify || { push_devices: 0 }; // older API without notifications
     if (['delivered', 'declined', 'unavailable', 'cancelled'].includes(o.status)) return null;
     const rows = h('div', { class: 'stack' });
     const card = h('div', { class: 'card', style: 'border-color:var(--accent)' },
@@ -196,7 +196,7 @@
         if (!supported) {
           pushBox.append(h('p', { class: 'hint' }, isIOS && !standalone
             ? 'iPhone: tap the Share button, choose "Add to Home Screen", then open Weekend Watch from your home screen and come back here to switch on notifications.'
-            : 'This browser cannot show notifications. Use Telegram or WhatsApp below.'));
+            : 'This browser cannot show notifications. Our shop will message you on WhatsApp instead.'));
           return;
         }
         const reg = await navigator.serviceWorker.getRegistration();
@@ -205,9 +205,9 @@
           pushBox.append(h('div', { class: 'row between' },
             h('span', { class: 'chip good' }, 'Notifications are on for this phone'),
             h('button', { class: 'btn secondary small', type: 'button', onclick: async (e) => {
-              busy(e.currentTarget, true, 'Turning off...');
+              busy(e.target, true, 'Turning off...');
               try { await post('/api/notify/push/remove', { endpoint: sub.endpoint }); await sub.unsubscribe(); WW.toast('Notifications turned off'); await load(); }
-              catch (x) { WW.toast(x.message); busy(e.currentTarget, false); }
+              catch (x) { WW.toast(x.message); busy(e.target, false); }
             } }, 'Turn off')));
           return;
         }
@@ -216,38 +216,22 @@
           return;
         }
         pushBox.append(h('button', { class: 'btn', type: 'button', onclick: async (e) => {
-          busy(e.currentTarget, true, 'Turning on...');
+          busy(e.target, true, 'Turning on...');
           try {
             const r = await navigator.serviceWorker.register('sw.js?api=' + encodeURIComponent(WW.API));
             await navigator.serviceWorker.ready;
-            if ((await Notification.requestPermission()) !== 'granted') throw new Error('You chose not to allow notifications. You can still use Telegram or WhatsApp.');
+            if ((await Notification.requestPermission()) !== 'granted') throw new Error('You chose not to allow notifications. No problem - our shop will message you on WhatsApp.');
             const s2 = (await r.pushManager.getSubscription()) || (await r.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(n.vapidPublicKey) }));
             await post('/api/notify/push', { subscription: s2.toJSON() });
             WW.toast('Done! We will notify this phone.');
             await load();
-          } catch (x) { WW.toast(x.message); busy(e.currentTarget, false); }
+          } catch (x) { WW.toast(x.message); busy(e.target, false); }
         } }, 'Notify me on this phone'));
       };
       draw().catch(() => pushBox.replaceChildren());
     }
 
-    // 2. Telegram
-    if (n.telegram) {
-      if (d.notify.telegram) {
-        rows.append(h('div', {}, h('span', { class: 'chip good' }, 'Telegram is connected'), h('span', { class: 'hint' }, '  Send /stop to the bot to turn it off.')));
-      } else {
-        rows.append(h('div', { class: 'stack' },
-          h('button', { class: 'btn secondary', type: 'button', onclick: async (e) => {
-            busy(e.currentTarget, true, 'Opening...');
-            try { const r = await post('/api/notify/telegram-link'); window.open(r.url, '_blank', 'noopener'); WW.toast('Press START in Telegram, then come back here.'); }
-            catch (x) { WW.toast(x.message); }
-            busy(e.currentTarget, false);
-          } }, 'Get updates on Telegram'),
-          h('button', { class: 'btn secondary small', type: 'button', onclick: () => load() }, 'I pressed Start - refresh')));
-      }
-    }
-
-    // 3. WhatsApp: the shop also messages people who did not pick the options above
+    // 2. WhatsApp: the shop also messages people who did not pick the options above
     rows.append(h('p', { class: 'hint' }, 'Not using the options above? No problem. Our shop also sends the important updates to you on WhatsApp.'));
     if (d.shopPhone) {
       const msg = `Hello, I am asking about my order ${o.code}.`;

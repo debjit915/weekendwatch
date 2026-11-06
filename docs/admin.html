@@ -33,7 +33,7 @@
       h('div', { class: 'field' }, h('label', { for: 'pw' }, 'Password'), pw), err, h('button', { class: 'btn', type: 'submit' }, 'Open')));
   }
 
-  const TABS = [['todo', 'To do'], ['messages', 'Messages'], ['weekend', 'Weekend plan'], ['catalog', 'Catalogue'], ['drivers', 'Drivers'], ['orders', 'All orders']];
+  const TABS = [['todo', 'To do'], ['messages', 'Messages'], ['weekend', 'Weekend plan'], ['catalog', 'Catalogue'], ['about', 'Owners page'], ['drivers', 'Drivers'], ['orders', 'All orders']];
   const body = h('div', { class: 'stack' });
   let msgBtn = null;
   function setBadge(n) { if (msgBtn) msgBtn.textContent = n > 0 ? `Messages (${n})` : 'Messages'; }
@@ -47,7 +47,7 @@
       })),
       body);
     adm('/api/admin/summary').then((s) => setBadge(s.outboxCount)).catch(() => {});
-    ({ todo, messages, weekend, catalog, drivers, orders }[tab])();
+    ({ todo, messages, weekend, catalog, about: aboutPage, drivers, orders }[tab])();
   }
   async function guard(fn) {
     try { await fn(); } catch (e) { if (e.status === 401) { session.del('ww_admin'); login('Wrong or expired password.'); } else body.replaceChildren(h('div', { class: 'error-box' }, e.message)); }
@@ -64,7 +64,7 @@
 
 
   // ---------------------------------------------------------------- MESSAGES (one-tap WhatsApp)
-  // Updates for customers who did not turn on phone notifications / Telegram.
+  // Updates for customers who did not turn on phone notifications.
   function messages() {
     guard(async () => {
       const [{ messages: list }, c] = await Promise.all([adm('/api/admin/outbox'), WW.config().catch(() => ({ shopName: 'our shop' }))]);
@@ -88,8 +88,119 @@
       if (!list.length) box.append(empty());
       body.replaceChildren(
         h('div', { class: 'card soft stack' }, h('h2', { style: 'margin:0' }, 'Messages to send'),
-          h('p', { class: 'muted', style: 'margin:0' }, 'These customers have not turned on phone notifications or Telegram, so tell them yourself. Tap Open WhatsApp, press Send in WhatsApp, and the message leaves this list. Customers who did turn notifications on are told automatically.')),
+          h('p', { class: 'muted', style: 'margin:0' }, 'These customers have not turned on phone notifications, so tell them yourself. Tap Open WhatsApp, press Send in WhatsApp, and the message leaves this list. Customers who did turn notifications on are told automatically.')),
         box);
+    });
+  }
+
+
+  // ---------------------------------------------------------------- OWNERS PAGE (About us)
+  // Edit the public "About us" page: story, owners with real photos, shop photos, GST, hours.
+  function aboutPage() {
+    guard(async () => {
+      const { about } = await api('/api/about');
+      const A = { ...about, trust_points: about.trust_points || [], owners: about.owners || [], shop_photos: about.shop_photos || [] };
+      const MAX_OWNERS = 6, MAX_PHOTOS = 12;
+
+      // upload one chosen photo: shrink in the browser, then send to the shop's server
+      const upload = async (file, maxDim) => {
+        const data = await WW.prepImage(file, maxDim);
+        const r = await adm('/api/admin/media', 'POST', { data });
+        return r.id;
+      };
+      const move = (arr, i, d) => { const j = i + d; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; };
+      const picker = (label, multiple, onFiles) => {
+        const input = h('input', { type: 'file', accept: 'image/*', ...(multiple ? { multiple: true } : {}), style: 'display:none', onchange: async () => {
+          const files = [...input.files]; input.value = '';
+          if (files.length) { btn.disabled = true; const old = btn.textContent; btn.textContent = 'Uploading...'; try { await onFiles(files); } catch (e) { toast(e.message); } btn.disabled = false; btn.textContent = old; }
+        } });
+        const btn = h('button', { class: 'btn secondary small', type: 'button', onclick: () => input.click() }, label);
+        return h('span', {}, btn, input);
+      };
+      const txt = (label, value, set, props = {}) => {
+        const el = props.area ? h('textarea', { maxlength: String(props.max || 300), placeholder: props.ph || '', style: props.rows ? `min-height:${props.rows * 1.6}em` : '' })
+                              : h('input', { type: props.type || 'text', maxlength: String(props.max || 120), placeholder: props.ph || '' });
+        el.value = value ?? '';
+        el.addEventListener('input', () => set(el.value));
+        return field(label, el);
+      };
+
+      // ---- owners
+      const ownersBox = h('div', { class: 'stack' });
+      const drawOwners = () => {
+        ownersBox.replaceChildren(...A.owners.map((o, i) => h('div', { class: 'card stack' },
+          h('div', { class: 'row', style: 'flex-wrap:nowrap;align-items:flex-start;gap:14px' },
+            h('div', { class: 'stack', style: 'width:120px;flex:none' },
+              o.photo ? h('img', { src: WW.mediaUrl(o.photo), alt: '', style: 'width:120px;height:150px;object-fit:cover;border-radius:10px;background:var(--accent-soft)' })
+                      : h('div', { style: 'width:120px;height:150px;border-radius:10px;background:var(--accent-soft);display:grid;place-items:center;text-align:center;font-size:.8rem;color:var(--muted);padding:6px' }, 'No photo yet'),
+              picker(o.photo ? 'Change photo' : 'Add photo', false, async ([f]) => { o.photo = await upload(f, 900); drawOwners(); })),
+            h('div', { style: 'flex:1;min-width:0' },
+              txt('Name', o.name, (v) => (o.name = v), { max: 80, ph: 'e.g. Ramesh Debnath' }),
+              txt('Role', o.role, (v) => (o.role = v), { max: 80, ph: 'e.g. Owner and master watch technician' }),
+              txt('Experience', o.experience, (v) => (o.experience = v), { max: 80, ph: 'e.g. 25 years in watches' }))),
+          txt('About this person', o.bio, (v) => (o.bio = v), { area: true, max: 1500, rows: 4, ph: 'A few friendly lines customers can relate to. Leave a blank line to start a new paragraph.' }),
+          txt('Phone shown to customers (optional)', o.phone, (v) => (o.phone = v), { type: 'tel', max: 16, ph: '10-digit mobile' }),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn secondary small', type: 'button', onclick: () => { move(A.owners, i, -1); drawOwners(); } }, 'Move up'),
+            h('button', { class: 'btn secondary small', type: 'button', onclick: () => { move(A.owners, i, 1); drawOwners(); } }, 'Move down'),
+            h('button', { class: 'btn danger small', type: 'button', onclick: () => { if (confirm('Remove this person from the page?')) { A.owners.splice(i, 1); drawOwners(); } } }, 'Remove')))));
+        if (!A.owners.length) ownersBox.append(h('p', { class: 'muted' }, 'No owners added yet.'));
+      };
+      drawOwners();
+
+      // ---- shop photos
+      const photosBox = h('div', { class: 'grid cols-3' });
+      const drawPhotos = () => {
+        photosBox.replaceChildren(...A.shop_photos.map((p, i) => h('div', { class: 'card stack' },
+          h('img', { src: WW.mediaUrl(p.media), alt: '', style: 'width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;background:var(--accent-soft)' }),
+          txt('Caption', p.caption, (v) => (p.caption = v), { max: 120, ph: 'e.g. Our shop on Main Road' }),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn secondary small', type: 'button', onclick: () => { move(A.shop_photos, i, -1); drawPhotos(); } }, '←'),
+            h('button', { class: 'btn secondary small', type: 'button', onclick: () => { move(A.shop_photos, i, 1); drawPhotos(); } }, '→'),
+            h('button', { class: 'btn danger small', type: 'button', onclick: () => { A.shop_photos.splice(i, 1); drawPhotos(); } }, 'Remove')))));
+        if (!A.shop_photos.length) photosBox.replaceChildren(h('p', { class: 'muted' }, 'No shop photos yet.'));
+      };
+      drawPhotos();
+
+      const trust = h('textarea', { maxlength: '1000', placeholder: 'One point per line, e.g.\nGST registered\nGenuine products only\nExpert in-house technician', style: 'min-height:120px' });
+      trust.value = A.trust_points.join('\n');
+      trust.addEventListener('input', () => { A.trust_points = trust.value.split('\n').map((x) => x.trim()).filter(Boolean).slice(0, 8); });
+
+      const save = h('button', { class: 'btn', type: 'button', onclick: async (e) => {
+        const b = e.currentTarget; // keep a reference: the event forgets its button after the first await
+        busy(b, true, 'Saving...');
+        try {
+          const payload = { ...A, established: A.established ? Number(A.established) : null };
+          const r = await adm('/api/admin/about', 'POST', { about: payload });
+          Object.assign(A, r.about);
+          toast('Saved. The About page is updated.');
+        } catch (x) { toast(x.message); }
+        busy(b, false);
+      } }, 'Save changes');
+
+      body.replaceChildren(
+        h('div', { class: 'card soft stack' },
+          h('div', { class: 'row between' }, h('h2', { style: 'margin:0' }, 'Owners page'), h('a', { class: 'btn secondary small', href: 'about.html', target: '_blank', rel: 'noopener noreferrer' }, 'View the page')),
+          h('p', { class: 'muted', style: 'margin:0' }, 'This is the public "About us" page. Real faces and real shop photos make new customers trust you. Upload clear, well-lit photos. They are shrunk automatically. Nothing changes on the website until you press Save changes at the bottom.')),
+        h('div', { class: 'card stack' }, h('h3', {}, 'About the shop'),
+          txt('Headline', A.headline, (v) => (A.headline = v), { max: 120, ph: 'e.g. A family watch shop since 1998' }),
+          txt('Our story', A.story, (v) => (A.story = v), { area: true, max: 3000, rows: 7, ph: 'How the shop started, what you are proud of. Leave a blank line to start a new paragraph.' }),
+          h('div', { class: 'grid cols-3' },
+            txt('Year started', A.established ?? '', (v) => (A.established = v), { type: 'number', max: 4, ph: 'e.g. 1998' }),
+            txt('GST number (GSTIN)', A.gst, (v) => (A.gst = v), { max: 20, ph: '15 characters' }),
+            txt('Opening hours', A.hours, (v) => (A.hours = v), { max: 200, ph: 'e.g. Mon-Sat 10 am - 8 pm' })),
+          field('Why customers trust us (shown as ticks)', trust)),
+        h('div', { class: 'stack' }, h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, 'Owners'),
+          h('button', { class: 'btn secondary small', type: 'button', onclick: () => { if (A.owners.length >= MAX_OWNERS) return toast(`At most ${MAX_OWNERS} people`); A.owners.push({ name: '', role: '', experience: '', bio: '', phone: '', photo: null }); drawOwners(); } }, 'Add an owner')), ownersBox),
+        h('div', { class: 'stack' }, h('div', { class: 'row between' }, h('h3', { style: 'margin:0' }, 'Shop photos'),
+          picker('Add shop photos', true, async (files) => {
+            for (const f of files) {
+              if (A.shop_photos.length >= MAX_PHOTOS) { toast(`At most ${MAX_PHOTOS} photos`); break; }
+              A.shop_photos.push({ media: await upload(f, 1400), caption: '' });
+              drawPhotos();
+            }
+          })), photosBox),
+        h('div', { class: 'row', style: 'position:sticky;bottom:12px' }, save));
     });
   }
 
@@ -167,13 +278,13 @@
       const checks = active.map((d) => h('label', {}, h('input', { type: 'checkbox', value: d.id, checked: true }), d.name));
       const out = h('div', { class: 'stack' });
       const build = h('button', { class: 'btn', type: 'button', onclick: async (e) => {
-        busy(e.currentTarget, true, 'Planning...');
+        busy(e.target, true, 'Planning...');
         try {
           const ids = checks.map((l) => l.firstChild).filter((i) => i.checked).map((i) => Number(i.value));
           const r = await adm('/api/admin/dispatch/build', 'POST', { saturday: sat.value, driver_ids: active.length ? ids : undefined });
           toast(`${r.scheduled} trips planned`);
           await showManifest(out, sat.value);
-        } catch (x) { toast(x.message); } finally { busy(e.currentTarget, false); }
+        } catch (x) { toast(x.message); } finally { busy(e.target, false); }
       } }, 'Build route plan');
       body.replaceChildren(
         h('div', { class: 'card stack no-print' },
@@ -227,9 +338,9 @@
           h('p', { class: 'muted' }, 'Export the sheet from Excel / Google Sheets as CSV. Needed columns: Brand, Model (or SKU), MRP. Optional: Description, Dial Shape, Colour, Strap, Link. Re-importing updates existing models.'),
           file, csv,
           h('button', { class: 'btn', type: 'button', onclick: async (e) => {
-            busy(e.currentTarget, true, 'Importing...');
+            busy(e.target, true, 'Importing...');
             try { const r = await adm('/api/admin/products/import', 'POST', { csv: csv.value }); toast(`${r.imported} watches imported` + (r.errors.length ? `, ${r.errors.length} lines skipped` : '')); if (r.errors.length) alert(r.errors.join('\n')); catalog(); }
-            catch (x) { toast(x.message); busy(e.currentTarget, false); }
+            catch (x) { toast(x.message); busy(e.target, false); }
           } }, 'Import CSV')),
         h('div', { class: 'card stack' }, h('h2', {}, 'Add one watch'),
           h('div', { class: 'grid cols-3' }, field('Brand', f.brand), field('Model number', f.model_no), field('MRP (₹)', f.mrp), field('Name / description', f.name), field('Dial shape', f.dial_shape), field('Colour', f.color), field('Strap', f.strap), field('Official page link', f.official_url)),
